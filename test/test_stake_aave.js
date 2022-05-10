@@ -8,7 +8,7 @@ const mockWETH = artifacts.require('WETHMock')
 const addresses = require("../migrations/addresses").development
 const ERC20abi = require("../abi/erc20")
 const IStakedAave = require('../abi/stakeAave')
-const UniswapV2Router02 = require('../abi/uniswapV2Router')
+const IUniswapV2Router02 = artifacts.require('IUniswapV2Router02')
 
 const toHex = (Amount) => `0x${Amount.raw.toString(16)}`
 
@@ -23,7 +23,6 @@ const getETHForTokenTrade = async (amount, tokenAddress1, tokenAddress2, provide
   const pair1 = await Fetcher.fetchPairData(token2, token, provider)
 
   const route = new Route([pair], token2)
-  const route1 = new Route([pair1], token)
   const amountIn = amount / +route.midPrice.toSignificant(6)
 
   const trade = new Trade(route, new TokenAmount(token2, Math.floor(amountIn * 10 ** 18)), TradeType.EXACT_INPUT)
@@ -33,8 +32,7 @@ const getETHForTokenTrade = async (amount, tokenAddress1, tokenAddress2, provide
 
 const swap = async (amount, tokenAddress1, tokenAddress2, provider, toAddress) => {
 
-
-  const uniswapRouterV2 = new web3.eth.Contract(UniswapV2Router02, addresses.uniswapRouterAddress)
+  const uniswapRouterV2 = await IUniswapV2Router02.at(addresses.uniswapRouterAddress)
 
   const trade = await getETHForTokenTrade(amount, tokenAddress1, tokenAddress2, provider)
 
@@ -53,14 +51,13 @@ const swap = async (amount, tokenAddress1, tokenAddress2, provider, toAddress) =
 
   const maxFeePerGas =  web3.utils.toWei('500', 'gwei')
 
-  const tx = await uniswapRouterV2.methods.swapExactETHForTokens(amountOutMin, path, toAddress, deadline).send({ from: toAddress, value, gasLimit: 500000, maxPriorityFeePerGas, maxFeePerGas})
+  const tx = await uniswapRouterV2.swapExactETHForTokens(amountOutMin, path, toAddress, deadline, { from: toAddress, value, gasLimit: 500000, maxPriorityFeePerGas, maxFeePerGas})
 
   return { tx, trade }
 }
 
 contract("Stake Aave", async accounts => {
   beforeEach(async function() {
-    console.log('hey')
     const provider = web3.currentProvider.HttpProvider
     
     const token0 = addresses.aave
@@ -79,14 +76,6 @@ contract("Stake Aave", async accounts => {
     const afterBalToken0 = await token0Contract.methods.balanceOf(accounts[0]).call()
 
     const afterBalToken1 =  await web3.eth.getBalance(accounts[0])
-
-    console.log('Token0')
-    console.log('Before', web3.utils.fromWei(beforeBalToken0))
-    console.log('After',  web3.utils.fromWei(afterBalToken0))
-    console.log()
-    console.log('Token1')
-    console.log('Before',  web3.utils.fromWei(beforeBalToken1))
-    console.log('After',  web3.utils.fromWei(afterBalToken1))
 
     const StakeAave = new web3.eth.Contract(IStakedAave, addresses.stakeAave)
 
@@ -112,16 +101,11 @@ contract("Stake Aave", async accounts => {
     const stakeAaveBalance =  await StakeAave.methods.balanceOf(accounts[0]).call()
     
     await StakeAave.methods.transfer(this.feeCollectorInstance.address, stakeAaveBalance).send({from: accounts[0], gasLimit: 400000})
-    
-    const feecollectorBalanceStkAave =  await StakeAave.methods.balanceOf(this.feeCollectorInstance.address).call()
 
-    console.log(feecollectorBalanceStkAave)
-    
   })
 
     
-  it("Should correctly deploy", async function() {
-    const cooldown = await this.feeCollectorInstance.startCooldown(addresses.stakeAave)
-    console.log('from', cooldown.logs[0].args)
+  it("Start cooldown of stake aave", async function() {
+     await this.feeCollectorInstance.startCooldown(addresses.stakeAave)
   })
-  })
+})
