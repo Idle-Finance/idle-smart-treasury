@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity = 0.7.5;
 pragma experimental ABIEncoderV2;
 
@@ -9,11 +8,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
-import '@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol';
-
 import "./interfaces/IFeeCollector.sol";
 import "./interfaces/BalancerInterface.sol";
-import "./interfaces/ITokenExchange.sol";
+import "./interfaces/IExchangeManager.sol";
 import "./interfaces/IStakeManager.sol";
 
 
@@ -27,8 +24,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
-  IUniswapV2Router02 private constant uniswapRouterV2 = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-  ITokenExchange private tokenExchangeRouter;
+  IExchangeManager private ExchangeManager;
   IStakeManager private StakeManager;
 
   address private immutable weth;
@@ -49,6 +45,11 @@ contract FeeCollector is IFeeCollector, AccessControl {
   event Deposit(
     address _from,
     uint    _weth
+  );
+  
+  event StartUnstakeCooldown(
+    uint256 _remaining,
+    uint256 _secCooldown
   );
 
   modifier smartTreasurySet {
@@ -86,15 +87,15 @@ contract FeeCollector is IFeeCollector, AccessControl {
     address _idleRebalancer,
     address _multisig,
     address[] memory _initialDepositTokens,
-    address _router,
+    address _exchangeManager,
     address _stakeManager
   ) {
     require(_weth != address(0), "WETH cannot be the 0 address");
     require(_feeTreasuryAddress != address(0), "Fee Treasury cannot be 0 address");
     require(_idleRebalancer != address(0), "Rebalancer cannot be 0 address");
     require(_multisig != address(0), "Multisig cannot be 0 address");
-    require(_router != address(0), "Router cannot be 0 address");
-    require(_stakeManager != address(0), "Router cannot be 0 address");
+    require(_exchangeManager != address(0), "Exchange Manager cannot be 0 address");
+    require(_stakeManager != address(0), "Stake Manager cannot be 0 address");
 
     require(_initialDepositTokens.length <= MAX_NUM_FEE_TOKENS);
     
@@ -102,8 +103,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _setupRole(WHITELISTED, _multisig); // setup multisig as whitelisted address
     _setupRole(WHITELISTED, _idleRebalancer); // setup multisig as whitelisted address
     
-
-    tokenExchangeRouter = ITokenExchange(_router);
+    ExchangeManager = IExchangeManager(_exchangeManager);
 
     StakeManager = IStakeManager(_stakeManager);
 
@@ -125,8 +125,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
       require(_depositToken != address(0), "Token cannot be 0 address");
       require(_depositToken != _weth, "WETH not supported"); // There is no WETH -> WETH pool in uniswap
       require(depositTokens.contains(_depositToken) == false, "Already exists");
-      // IERC20(_depositToken).safeIncreaseAllowance(address(uniswapRouterV2), type(uint256).max); // max approval
-      tokenExchangeRouter.tokenApprove(_depositToken, type(uint256).max); // max approval
+      ExchangeManager.approveToken(_depositToken, type(uint256).max); // max approval
       depositTokens.add(_depositToken);
     }
   }
@@ -174,7 +173,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
       _currentBalance = _tokenInterface.balanceOf(address(this));
 
-      _tokenInterface.safeTransfer(address(tokenExchangeRouter), _currentBalance);
+      _tokenInterface.safeTransfer(address(ExchangeManager), _currentBalance);
 
       
       // Only swap if balance > 0
@@ -183,16 +182,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
         
         path[0] = address(_tokenInterface);
         
-        // swap token
-        // uniswapRouterV2.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-        //   _currentBalance,
-        //   _minTokenOut[index], 
-        //   path,
-        //   address(this),
-        //   block.timestamp.add(1800)
-        // );
-        
-        tokenExchangeRouter.exchange(
+        ExchangeManager.exchange(
           address(_tokenInterface),
           _minTokenOut[index],
           address(this),
@@ -226,43 +216,26 @@ contract FeeCollector is IFeeCollector, AccessControl {
     }
     emit Deposit(msg.sender, wethBalance);
   }
-  /*
-  @author Asaf Silman
-  @notice Sets the split allocations of fees to send to fee beneficiaries
-  @dev The split allocations must sum to 100000.
-  @dev Before the split allocation is updated internally a call to `deposit()` is made
-       such that all fee accrued using the previous allocations.
-  @dev smartTreasury must be set for this to be called.
-  @param exchangeAddress The updated split ratio.
-   */
-  function setExchange(address exchangeAddress) external onlyAdmin {
-    address oldRuterAddress = address(tokenExchangeRouter);
-    ITokenExchange oldRuter = ITokenExchange(oldRuterAddress);
+  
+  function setExchangeManager(address exchangeAddress) external onlyAdmin {
+    address oldExchangeManagerAddress = address(ExchangeManager);
 
-    tokenExchangeRouter = ITokenExchange(exchangeAddress);
-    uint256 counter = depositTokens.length();
-    address _token;
+    IExchangeManager oldExchangeManager = IExchangeManager(oldExchangeManagerAddress);
 
-    for (uint256 index = 0; index < counter; index++) {
-      _token = depositTokens.at(index);
-      oldRuter.removeTokenApprove(_token);
-      tokenExchangeRouter.tokenApprove(_token, type(uint256).max);
+    ExchangeManager = IExchangeManager(exchangeAddress);
+
+    address _tokenAddress;
+
+    for (uint256 index = 0; index < depositTokens.length(); index++) {
+      _tokenAddress = depositTokens.at(index);
+
+      oldExchangeManager.removeApproveToken(_tokenAddress);
+
+      ExchangeManager.approveToken(_tokenAddress, type(uint256).max);
     }
-
   }
-  /*
-  @author Asaf Silman
-  @notice Sets the split allocations of fees to send to fee beneficiaries
-  @dev The split allocations must sum to 100000.
-  @dev Before the split allocation is updated internally a call to `deposit()` is made
-       such that all fee accrued using the previous allocations.
-  @dev smartTreasury must be set for this to be called.
-  @param exchangeAddress The updated split ratio.
-   */
 
-  event Cooldown(uint256 _remaining, uint256 _secCooldown);
-
-  function startCooldown(address _unstakeToken) external onlyAdmin {
+  function startUnstakeCooldown(address _unstakeToken) external onlyAdmin {
     IERC20 unstakeToken = IERC20(_unstakeToken);
 
     uint256 currentBalance = unstakeToken.balanceOf(address(this));
@@ -270,7 +243,8 @@ contract FeeCollector is IFeeCollector, AccessControl {
     unstakeToken.safeTransfer(address(StakeManager), currentBalance);
 
     StakeManager.cooldown();
-    emit Cooldown(StakeManager.stakersCooldowns(), StakeManager.COOLDOWN_SECONDS());
+
+    emit StartUnstakeCooldown(StakeManager.stakersCooldowns(), StakeManager.COOLDOWN_SECONDS());
   }
 
   /*
@@ -463,9 +437,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     require(_tokenAddress != address(0), "Token cannot be 0 address");
     require(_tokenAddress != weth, "WETH not supported"); // There is no WETH -> WETH pool in uniswap
     require(depositTokens.contains(_tokenAddress) == false, "Already exists");
-
-    // IERC20(_tokenAddress).safeIncreaseAllowance(address(uniswapRouterV2), type(uint256).max); // max approval
-    tokenExchangeRouter.tokenApprove(_tokenAddress, type(uint256).max);
+    ExchangeManager.approveToken(_tokenAddress, type(uint256).max);
     depositTokens.add(_tokenAddress);
   }
 
@@ -476,8 +448,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _tokenAddress The fee token address to remove.
    */
   function removeTokenFromDepositList(address _tokenAddress) external override onlyAdmin {
-    IERC20(_tokenAddress).safeApprove(address(uniswapRouterV2), 0); // 0 approval for uniswap
-    // tokenExchangeRouter.tokenApprove(_tokenAddress, 0);
+    ExchangeManager.removeApproveToken(_tokenAddress);
     depositTokens.remove(_tokenAddress);
   }
 

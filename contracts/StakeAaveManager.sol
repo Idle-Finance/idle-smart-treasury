@@ -8,9 +8,7 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "./interfaces/IStakedAave.sol";
 import "./interfaces/IStakeManager.sol";
 
-
-
-contract StakeAaveManaget is IStakeManager {
+contract StakeAaveManager is IStakeManager {
 
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
@@ -20,9 +18,6 @@ contract StakeAaveManaget is IStakeManager {
   constructor (address _stakeAave) {
     StakeAeve = IStakedAave(_stakeAave);
   }
-
-  event Cooldown(uint256 _remaining, uint256 _secCooldown);
-
 
   function cooldown() external override {
     StakeAeve.cooldown();

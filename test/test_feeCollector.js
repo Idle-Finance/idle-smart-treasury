@@ -5,7 +5,7 @@ const { expect } = require('chai');
 const FeeCollector = artifacts.require('FeeCollector')
 const IUniswapV2Router02 = artifacts.require('IUniswapV2Router02')
 const UniswapV2Exchange = artifacts.require('UniswapV2Exchange')
-const StakeAaveManaget = artifacts.require('StakeAaveManaget')
+const StakeAaveManager = artifacts.require('StakeAaveManager')
 
 
 const BPool = artifacts.require('BPool')
@@ -24,7 +24,7 @@ const BNify = n => new BN(String(n))
 
 contract.only("FeeCollector", async accounts => {
   beforeEach(async function(){
-    this.zeroAddress = "0x0000000000000000000000000000000000000000";
+    this.zeroAddress = "0x0000000000000000000000000000000000000000"
     this.nonZeroAddress = "0x0000000000000000000000000000000000000001"
     this.nonZeroAddress2 = "0x0000000000000000000000000000000000000002"
 
@@ -45,7 +45,7 @@ contract.only("FeeCollector", async accounts => {
     // initialise the mockWETH/mockDAI uniswap pool
     await this.uniswapRouterInstance.addLiquidity(
       this.mockWETH.address, this.mockDAI.address,
-      web3.utils.toWei("500"), web3.utils.toWei("300000"), // 300,000 DAI deposit into pool
+      web3.utils.toWei("1000"), web3.utils.toWei("600000"), // 600,000 DAI deposit into pool
       0, 0,
       accounts[0],
       BNify(web3.eth.getBlockNumber())
@@ -60,8 +60,8 @@ contract.only("FeeCollector", async accounts => {
       BNify(web3.eth.getBlockNumber())
     )
 
-    const router = await UniswapV2Exchange.new()
-    const stakeManager = await StakeAaveManaget.new(addresses.stakeAave)
+    const exchangeManager = await UniswapV2Exchange.new()
+    const stakeManager = await StakeAaveManager.new(addresses.stakeAave)
 
     this.feeCollectorInstance = await FeeCollector.new(
       this.mockWETH.address,
@@ -69,7 +69,7 @@ contract.only("FeeCollector", async accounts => {
       addresses.idleRebalancer,
       accounts[0],
       [],
-      router.address,
+      exchangeManager.address,
       stakeManager.address
     )
 
@@ -102,7 +102,7 @@ contract.only("FeeCollector", async accounts => {
   })
 
     
-  it.skip("Should correctly deploy", async function() {
+  it("Should correctly deploy", async function() {
     let instance = this.feeCollectorInstance
 
     let allocation = await instance.getSplitAllocation.call()
@@ -151,17 +151,9 @@ contract.only("FeeCollector", async accounts => {
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let smartTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(this.bPool.address))
     let balancerPoolTokenSupplyBefore = BNify(await this.crp.totalSupply.call());
-    
     let depositAmount = web3.utils.toWei("500")
     await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
-    const deposit =  await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit
-    console.log('from',deposit.logs[0].args)
-    const  newUniswapV2Exchange  = await UniswapV2Exchange.new()
-    await instance.setExchange(newUniswapV2Exchange.address, {from: accounts[0]})
-
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
     await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit
-    
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let smartTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(this.bPool.address))     
     let balancerPoolTokenSupplyAfter = BNify(await this.crp.totalSupply.call());
@@ -176,8 +168,42 @@ contract.only("FeeCollector", async accounts => {
     
     expect(balancerPoolTokenSupplyDiff).to.be.bignumber.that.is.greaterThan(BNify('0'))
   })
+  it("Should change the Exchange Manager", async function () {
+    let instance = this.feeCollectorInstance
 
-  it.skip("Should deposit with max fee tokens and max beneficiaries", async function() {
+    await instance.setSmartTreasuryAddress(this.crp.address)
+    await instance.setSplitAllocation(
+      [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50')), 0],
+      {from: accounts[0]}) // set split 50/50
+    await instance.registerTokenToDepositList(this.mockDAI.address, {from: accounts[0]}) // whitelist dai
+    
+    const newUniswapV2Exchange = await UniswapV2Exchange.new()
+    await instance.setExchangeManager(newUniswapV2Exchange.address, {from: accounts[0]})
+
+    let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
+    let smartTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(this.bPool.address))
+    let balancerPoolTokenSupplyBefore = BNify(await this.crp.totalSupply.call());
+    
+    let depositAmount = web3.utils.toWei("500")
+    await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
+
+    await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit
+
+    let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
+    let smartTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(this.bPool.address))     
+    let balancerPoolTokenSupplyAfter = BNify(await this.crp.totalSupply.call());
+
+    let smartTreasuryWethBalanceDiff = smartTreasuryWethBalanceAfter.sub(smartTreasuryWethBalanceBefore)
+    let feeTreasuryWethBalanceDiff = feeTreasuryWethBalanceAfter.sub(feeTreasuryWethBalanceBefore)
+    let balancerPoolTokenSupplyDiff = balancerPoolTokenSupplyAfter.sub(balancerPoolTokenSupplyBefore)
+
+    expect(feeTreasuryWethBalanceDiff).to.be.bignumber.equal(smartTreasuryWethBalanceDiff)
+    expect(smartTreasuryWethBalanceDiff).to.be.bignumber.that.is.greaterThan(BNify('0'))
+    
+    expect(balancerPoolTokenSupplyDiff).to.be.bignumber.that.is.greaterThan(BNify('0'))
+  })
+
+  it("Should deposit with max fee tokens and max beneficiaries", async function() {
     let instance = this.feeCollectorInstance
     await instance.setSmartTreasuryAddress(this.crp.address)
 
@@ -194,11 +220,10 @@ contract.only("FeeCollector", async accounts => {
     let minTokenBalance = []
 
 
-    for (let index = 0; index < 8; index++) {
+    for (let index = 0; index < 15; index++) {
       let token = await mockDAI.new()
       await instance.registerTokenToDepositList(token.address)
       await token.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
-      console.log(token.address, this.mockWETH.address)
 
       await this.uniswapRouterInstance.addLiquidity(
         this.mockWETH.address, token.address,
@@ -218,7 +243,7 @@ contract.only("FeeCollector", async accounts => {
     console.log(`Gas used: ${transaction.receipt.gasUsed}`)
   })
 
-  it.skip('Should not be able to add duplicate beneficiaries', async function() {
+  it('Should not be able to add duplicate beneficiaries', async function() {
     let instance = this.feeCollectorInstance
     await instance.setSmartTreasuryAddress(this.crp.address) // must set smart treasury address
 
@@ -229,7 +254,7 @@ contract.only("FeeCollector", async accounts => {
     expectRevert(instance.addBeneficiaryAddress(accounts[0], allocationA), "Duplicate beneficiary")
   })
 
-  it.skip("Should remove beneficiary", async function() {
+  it("Should remove beneficiary", async function() {
     let instance = this.feeCollectorInstance
     await instance.setSmartTreasuryAddress(this.crp.address) // must set smart treasury address
 
@@ -247,7 +272,7 @@ contract.only("FeeCollector", async accounts => {
     expect(beneficiaries[1].toLowerCase()).to.be.equal(accounts[0].toLowerCase())
   })
 
-  it.skip("Should respect previous allocation when removing beneficiary", async function() {
+  it("Should respect previous allocation when removing beneficiary", async function() {
     let instance = this.feeCollectorInstance
     await instance.setSmartTreasuryAddress(this.crp.address) // must set smart treasury address
     
@@ -290,7 +315,7 @@ contract.only("FeeCollector", async accounts => {
 
   })
 
-  it.skip("Should respect previous allocation when adding beneficiary", async function() {
+  it("Should respect previous allocation when adding beneficiary", async function() {
     let instance = this.feeCollectorInstance
     await instance.setSmartTreasuryAddress(this.crp.address) // must set smart treasury address
 
@@ -326,14 +351,14 @@ contract.only("FeeCollector", async accounts => {
     expect(BNify(await this.mockWETH.balanceOf.call(accounts[2]))).to.be.bignumber.that.is.equal(BNify("0"))
   })
 
-  it.skip("Should revert when calling function with onlyWhitelisted modifier from non-whitelisted address", async function() {
+  it("Should revert when calling function with onlyWhitelisted modifier from non-whitelisted address", async function() {
     let instance = this.feeCollectorInstance
     
     await instance.setSmartTreasuryAddress(this.crp.address) // must set smart treasury address
     await expectRevert(instance.deposit([], [], 0, {from: accounts[1]}), "Unauthorised") // call deposit
   })
 
-  it.skip("Should revert when calling function with onlyAdmin modifier when not admin", async function() {
+  it("Should revert when calling function with onlyAdmin modifier when not admin", async function() {
     let instance = this.feeCollectorInstance
     
     let allocation = [
@@ -360,7 +385,7 @@ contract.only("FeeCollector", async accounts => {
     await expectRevert(instance.replaceAdmin(this.nonZeroAddress, {from: accounts[1]}), "Unauthorised")
   })
 
-  it.skip("Should revert when calling function with smartTreasurySet modifier when smart treasury not set", async function() {
+  it("Should revert when calling function with smartTreasurySet modifier when smart treasury not set", async function() {
     let instance = this.feeCollectorInstance
     
     let allocation = [
@@ -371,7 +396,7 @@ contract.only("FeeCollector", async accounts => {
     await expectRevert(instance.setSplitAllocation(allocation, {from: accounts[0]}), "Smart Treasury not set")
   })
 
-  it.skip("Should add & remove a token from the deposit list", async function() {
+  it("Should add & remove a token from the deposit list", async function() {
     let instance = this.feeCollectorInstance
     let mockDaiAddress = this.mockDAI.address
 
@@ -388,7 +413,7 @@ contract.only("FeeCollector", async accounts => {
     assert.isFalse(daiNoLongerInDepositList)
   })
 
-  it.skip("Should set beneficiary address", async function() {
+  it("Should set beneficiary address", async function() {
     let instance = this.feeCollectorInstance
     await instance.setSmartTreasuryAddress(this.crp.address) // must set smart treasury address
 
@@ -409,7 +434,7 @@ contract.only("FeeCollector", async accounts => {
     expect(newFeeTreasuryAddress[1].toLowerCase()).to.be.equal(this.nonZeroAddress)
   })
 
-  it.skip("Should set smart treasury address", async function() {
+  it("Should set smart treasury address", async function() {
     let instance = this.feeCollectorInstance
 
     let initialSmartTreasuryAddress = await instance.getSmartTreasuryAddress.call()
@@ -429,7 +454,7 @@ contract.only("FeeCollector", async accounts => {
     expect(wethAllowanceAfter).to.be.bignumber.equal(BNify('0'))
   })
 
-  it.skip("Should add & remove whitelist address", async function() {
+  it("Should add & remove whitelist address", async function() {
     let instance = this.feeCollectorInstance
 
     let before = await instance.isAddressWhitelisted(this.nonZeroAddress)
@@ -444,7 +469,7 @@ contract.only("FeeCollector", async accounts => {
     expect(final, "Address should not be whitelisted").to.be.false
   })
 
-  it.skip("Should withdraw underlying deposit token", async function() {
+  it("Should withdraw underlying deposit token", async function() {
     let instance = this.feeCollectorInstance
     let allocation = [
       this.ratio_one_pecrent.mul(BNify('100')),
@@ -476,7 +501,7 @@ contract.only("FeeCollector", async accounts => {
     expect(wethBalanceWithdrawn).to.be.bignumber.that.is.greaterThan(BNify('0'))
   })
 
-  it.skip("Should withdraw arbitrary token", async function() {
+  it("Should withdraw arbitrary token", async function() {
     let instance = this.feeCollectorInstance
 
     let depositAmount = web3.utils.toWei("500")
@@ -489,7 +514,7 @@ contract.only("FeeCollector", async accounts => {
     expect(daiBalance).to.be.bignumber.equal(depositAmount)
   })
 
-  it.skip("Should replace admin", async function() {
+  it("Should replace admin", async function() {
     let instance = this.feeCollectorInstance
 
     let nonZeroAddressIsAdmin = await instance.isAddressAdmin.call(this.nonZeroAddress)
@@ -503,7 +528,7 @@ contract.only("FeeCollector", async accounts => {
     expect(previousAdminRevoked, "Previous admin should be revoked").to.be.false
   })
 
-  it.skip("Should not be able to add duplicate deposit token", async function() {
+  it("Should not be able to add duplicate deposit token", async function() {
     let instance = this.feeCollectorInstance
 
     await instance.registerTokenToDepositList(this.mockDAI.address)
@@ -513,13 +538,13 @@ contract.only("FeeCollector", async accounts => {
     expect(totalDepositTokens).to.be.bignumber.equal(BNify('1'))
   })
 
-  it.skip("Should not add WETH as deposit token", async function() {
+  it("Should not add WETH as deposit token", async function() {
     let instance = this.feeCollectorInstance
 
     await expectRevert(instance.registerTokenToDepositList(this.mockWETH.address), "WETH not supported")
   })
 
-  it.skip("Should not be able to add deposit tokens past limit", async function() {
+  it("Should not be able to add deposit tokens past limit", async function() {
     let instance = this.feeCollectorInstance
 
     for (let index = 0; index < 15; index++) {
@@ -531,7 +556,7 @@ contract.only("FeeCollector", async accounts => {
     await expectRevert(instance.registerTokenToDepositList(token.address), "Too many tokens")
   })
 
-  it.skip("Should not set invalid split ratio", async function() {
+  it("Should not set invalid split ratio", async function() {
     let instance = this.feeCollectorInstance
     
     let allocation = [this.ratio_one_pecrent.mul(BNify('101')), BNify('0'), BNify('0')]

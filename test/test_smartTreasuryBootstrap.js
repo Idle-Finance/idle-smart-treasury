@@ -5,6 +5,9 @@ const { expect } = require('chai');
 const SmartTreasuryBootstrap = artifacts.require('SmartTreasuryBootstrap')
 const FeeCollector = artifacts.require('FeeCollector')
 const IUniswapV2Router02 = artifacts.require('IUniswapV2Router02')
+const UniswapV2Exchange = artifacts.require('UniswapV2Exchange')
+const StakeAaveManager = artifacts.require('StakeAaveManager')
+
 const mockIDLE = artifacts.require('IDLEMock')
 const mockWETH = artifacts.require('WETHMock')
 const mockDAI = artifacts.require('DAIMock')
@@ -51,13 +54,17 @@ contract('SmartTreasuryBootstrap', async accounts => {
       accounts[0],
       BNify(web3.eth.getBlockNumber())
     )
+    const exchangeManager = await UniswapV2Exchange.new()
+    const stakeManager = await StakeAaveManager.new(addresses.stakeAave)
 
     this.feeCollectorInstance = await FeeCollector.new(
       this.mockWETH.address,
       addresses.feeTreasuryAddress,
       addresses.idleRebalancer,
       accounts[0],
-      []
+      [],
+      exchangeManager.address,
+      stakeManager.address
     )
 
     this.smartTreasuryBootstrapInstance = await SmartTreasuryBootstrap.new(

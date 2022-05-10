@@ -7,9 +7,9 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-import './interfaces/ITokenExchange.sol';
+import './interfaces/IExchangeManager.sol';
 
-contract UniswapV3Exchange is ITokenExchange {
+contract UniswapV3Exchange is IExchangeManager {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
@@ -38,11 +38,11 @@ contract UniswapV3Exchange is ITokenExchange {
     uniswapRouterV3.exactInputSingle(params);
   }
 
-  function tokenApprove(address _depositToken, uint256 amount) external override {
+  function approveToken(address _depositToken, uint256 amount) external override {
     IERC20(_depositToken).safeIncreaseAllowance(address(uniswapRouterV3), amount);
   }
 
-  function removeTokenApprove(address _token) external override {
+  function removeApproveToken(address _token) external override {
     IERC20(_token).safeApprove(address(uniswapRouterV3), 0);
   }
 }

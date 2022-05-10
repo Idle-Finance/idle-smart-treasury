@@ -1,6 +1,7 @@
 const addresses = require('./addresses');
 const FeeCollector = artifacts.require("FeeCollector");
 const UniswapV2Exchange = artifacts.require('UniswapV2Exchange')
+const StakeAaveManager = artifacts.require('StakeAaveManager')
 
 module.exports = async function (deployer, network) {
   if (network === 'test' || network === 'development' || network == 'soliditycoverage') {
@@ -10,8 +11,10 @@ module.exports = async function (deployer, network) {
   _addresses = addresses[network];
 
   await deployer.deploy(UniswapV2Exchange)
+  await deployer.deploy(StakeAaveManager)
 
-  const _router = await UniswapV2Exchange.deployed()
+  const exchangeManager = await UniswapV2Exchange.deployed()
+  const stakeManager = await StakeAaveManager.deployed()
   
   deployer.deploy(FeeCollector, 
     _addresses.weth,
@@ -19,6 +22,7 @@ module.exports = async function (deployer, network) {
     _addresses.idleRebalancer,
     _addresses.multisig,
     _addresses.feeTokens,
-    _router.address
-    )
+    exchangeManager.address,
+    stakeManager.address
+  )
 }

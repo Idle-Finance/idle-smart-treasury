@@ -1,9 +1,9 @@
-const { BN, constants } = require('@openzeppelin/test-helpers');
+const { constants } = require('@openzeppelin/test-helpers');
 const { Fetcher, Route, Trade, TokenAmount, TradeType, ChainId, Percent } = require('@uniswap/sdk')
 const { expect } = require('chai');
 const FeeCollector = artifacts.require('FeeCollector')
 const UniswapV2Exchange = artifacts.require('UniswapV2Exchange')
-const StakeAaveManaget = artifacts.require('StakeAaveManaget')
+const StakeAaveManager = artifacts.require('StakeAaveManager')
 const mockWETH = artifacts.require('WETHMock')
 const addresses = require("../migrations/addresses").development
 const ERC20abi = require("../abi/erc20")
@@ -20,7 +20,6 @@ const getETHForTokenTrade = async (amount, tokenAddress1, tokenAddress2, provide
   const token = await Fetcher.fetchTokenData(ChainId.MAINNET, tokenAddress1, provider)
   const token2 = await Fetcher.fetchTokenData(ChainId.MAINNET, tokenAddress2, provider)
   const pair = await Fetcher.fetchPairData(token, token2, provider)
-  const pair1 = await Fetcher.fetchPairData(token2, token, provider)
 
   const route = new Route([pair], token2)
   const amountIn = amount / +route.midPrice.toSignificant(6)
@@ -65,17 +64,11 @@ contract("Stake Aave", async accounts => {
 
     const token0Contract = new web3.eth.Contract(ERC20abi, token0)
 
-    const beforeBalToken0 = await token0Contract.methods.balanceOf(accounts[0]).call()
-
     await token0Contract.methods.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256).send({from: accounts[0]})
-    
-    const beforeBalToken1 = await web3.eth.getBalance(accounts[0])
 
     await swap(10, token0, token1, provider, accounts[0])
     
     const afterBalToken0 = await token0Contract.methods.balanceOf(accounts[0]).call()
-
-    const afterBalToken1 =  await web3.eth.getBalance(accounts[0])
 
     const StakeAave = new web3.eth.Contract(IStakedAave, addresses.stakeAave)
 
@@ -86,7 +79,7 @@ contract("Stake Aave", async accounts => {
     
     const router = await UniswapV2Exchange.new()
 
-    const stakeManaget = await StakeAaveManaget.new(addresses.stakeAave)
+    const stakeManaget = await StakeAaveManager.new(addresses.stakeAave)
     
     this.feeCollectorInstance = await FeeCollector.new(
       this.mockWETH.address,
@@ -106,6 +99,6 @@ contract("Stake Aave", async accounts => {
 
     
   it("Start cooldown of stake aave", async function() {
-     await this.feeCollectorInstance.startCooldown(addresses.stakeAave)
+     await this.feeCollectorInstance.startUnstakeCooldown(addresses.stakeAave)
   })
 })
