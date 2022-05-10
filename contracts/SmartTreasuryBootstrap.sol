@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity = 0.6.8;
+pragma solidity = 0.7.5;
 pragma experimental ABIEncoderV2;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -16,7 +16,7 @@ import "./interfaces/BalancerInterface.sol";
 
 import "./libraries/BalancerConstants.sol";
 
-/**
+/*
 @author Asaf Silman
 @notice Smart contract for initialising the idle smart treasury
  */
@@ -47,7 +47,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
 
   EnumerableSet.AddressSet private depositTokens;
 
-  /**
+  /*
   @author Asaf Silman
   @notice Initialises the bootstrap contract.
   @dev Configures balancer factories
@@ -71,7 +71,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     address _feeCollectorAddress,
     address _multisig,
     address[] memory _initialDepositTokens
-  ) public {
+  ) {
     require(_balancerBFactory != address(0), "BFactory cannot be the 0 address");
     require(_balancerCRPFactory != address(0), "CRPFactory cannot be the 0 address");
     require(_idle != address(0), "IDLE cannot be the 0 address");
@@ -106,7 +106,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     contractState = ContractState.DEPLOYED;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Converts all tokens in depositToken enumerable set to WETH.
   @dev Can be called after deployment as many times an necissary.
@@ -148,7 +148,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     contractState = ContractState.SWAPPED;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Initialises the smart treasury with bootstrapping parameters
   @notice Calculated initial weights based on total value of IDLE and WETH.
@@ -205,7 +205,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
       canChangeCap:       false
     });
     
-    /**** DEPLOY POOL ****/
+    /*** DEPLOY POOL ****/
 
     ConfigurableRightsPool crp = balancer_crpfactory.newCrp(
       address(balancer_bfactory),
@@ -227,7 +227,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     contractState = ContractState.INITIALISED;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Creates the smart treasury, pulls underlying funds, and mints 1000 liquidity tokens
   @notice calls updateWeightsGradually to being updating the token weights to the desired initial distribution.
@@ -239,7 +239,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     
     ConfigurableRightsPool crp = ConfigurableRightsPool(crpaddress);
 
-    /**** CREATE POOL ****/
+    /*** CREATE POOL ****/
     crp.createPool(
       1000 * 10 ** 18, // mint 1000 shares
       3 days, // minimumWeightChangeBlockPeriodParam
@@ -250,7 +250,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     finalWeights[0] = BalancerConstants.BONE.mul(225).div(10); // 90 %
     finalWeights[1] = BalancerConstants.BONE.mul(25).div(10); // 10 %
 
-    /**** CALL GRADUAL POOL WEIGHT UPDATE ****/
+    /*** CALL GRADUAL POOL WEIGHT UPDATE ****/
 
     crp.updateWeightsGradually(
       finalWeights,
@@ -261,7 +261,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     contractState = ContractState.BOOTSTRAPPED;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Renounces ownership of the smart treasury from this contract to idle governance
   @notice Transfers balancer liquidity tokens to fee collector
@@ -283,7 +283,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     contractState = ContractState.RENOUNCED;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Withdraws a arbitrarty ERC20 token from this contract to an arbitrary address.
   @param _token The ERC20 token address.
@@ -297,7 +297,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     token.safeTransfer(_toAddress, _amount);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Set idle price per weth. Used for setting initial weights of smart treasury
   @dev expressed in Wei
@@ -307,7 +307,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     idlePerWeth = _idlePerWeth;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Registers a fee token to depositTokens for swapping to WETH
   @dev All fee tokens from fee treasury should be added in this manor
@@ -321,7 +321,7 @@ contract SmartTreasuryBootstrap is ISmartTreasuryBootstrap, Ownable {
     depositTokens.add(_tokenAddress);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Removes a fee token depositTokens
   @param _tokenAddress Token address to remove

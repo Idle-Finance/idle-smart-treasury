@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity = 0.6.8;
+pragma solidity = 0.7.5;
 pragma experimental ABIEncoderV2;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
@@ -13,6 +13,9 @@ import '@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol';
 
 import "./interfaces/IFeeCollector.sol";
 import "./interfaces/BalancerInterface.sol";
+import "./interfaces/ITokenExchange.sol";
+import "./interfaces/IStakeManager.sol";
+
 
 /**
 @title Idle finance Fee collector
@@ -25,6 +28,8 @@ contract FeeCollector is IFeeCollector, AccessControl {
   using SafeERC20 for IERC20;
 
   IUniswapV2Router02 private constant uniswapRouterV2 = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
+  ITokenExchange private tokenExchangeRouter;
+  IStakeManager private StakeManager;
 
   address private immutable weth;
 
@@ -41,6 +46,11 @@ contract FeeCollector is IFeeCollector, AccessControl {
   uint256 public constant MAX_NUM_FEE_TOKENS = 15; // Cap max tokens to 15
   bytes32 public constant WHITELISTED = keccak256("WHITELISTED_ROLE");
 
+  event Deposit(
+    address _from,
+    uint    _weth
+  );
+
   modifier smartTreasurySet {
     require(beneficiaries[0]!=address(0), "Smart Treasury not set");
     _;
@@ -56,7 +66,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Initialise the FeeCollector contract.
   @dev Sets the smartTreasury, weth address, uniswap router, and fee split allocations.
@@ -68,24 +78,34 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _idleRebalancer Idle rebalancer address
   @param _multisig The multisig account to transfer ownership to after contract initialised
   @param _initialDepositTokens The initial tokens to register with the fee deposit
-   */
+  @param _router the router
+  */
   constructor (
     address _weth,
     address _feeTreasuryAddress,
     address _idleRebalancer,
     address _multisig,
-    address[] memory _initialDepositTokens
-  ) public {
+    address[] memory _initialDepositTokens,
+    address _router,
+    address _stakeManager
+  ) {
     require(_weth != address(0), "WETH cannot be the 0 address");
     require(_feeTreasuryAddress != address(0), "Fee Treasury cannot be 0 address");
     require(_idleRebalancer != address(0), "Rebalancer cannot be 0 address");
     require(_multisig != address(0), "Multisig cannot be 0 address");
+    require(_router != address(0), "Router cannot be 0 address");
+    require(_stakeManager != address(0), "Router cannot be 0 address");
 
     require(_initialDepositTokens.length <= MAX_NUM_FEE_TOKENS);
     
     _setupRole(DEFAULT_ADMIN_ROLE, _multisig); // setup multisig as admin
     _setupRole(WHITELISTED, _multisig); // setup multisig as whitelisted address
     _setupRole(WHITELISTED, _idleRebalancer); // setup multisig as whitelisted address
+    
+
+    tokenExchangeRouter = ITokenExchange(_router);
+
+    StakeManager = IStakeManager(_stakeManager);
 
     // configure weth address and ERC20 interface
     weth = _weth;
@@ -105,13 +125,13 @@ contract FeeCollector is IFeeCollector, AccessControl {
       require(_depositToken != address(0), "Token cannot be 0 address");
       require(_depositToken != _weth, "WETH not supported"); // There is no WETH -> WETH pool in uniswap
       require(depositTokens.contains(_depositToken) == false, "Already exists");
-
-      IERC20(_depositToken).safeIncreaseAllowance(address(uniswapRouterV2), type(uint256).max); // max approval
+      // IERC20(_depositToken).safeIncreaseAllowance(address(uniswapRouterV2), type(uint256).max); // max approval
+      tokenExchangeRouter.tokenApprove(_depositToken, type(uint256).max); // max approval
       depositTokens.add(_depositToken);
     }
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Converts all registered fee tokens to WETH and deposits to
           fee treasury and smart treasury based on split allocations.
@@ -125,7 +145,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _deposit(_depositTokensEnabled, _minTokenOut, _minPoolAmountOut);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @dev implements deposit()
    */
@@ -145,7 +165,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
     address[] memory path = new address[](2);
     path[1] = weth; // output will always be weth
-    
+
     // iterate through all registered deposit tokens
     for (uint256 index = 0; index < counter; index++) {
       if (_depositTokensEnabled[index] == false) {continue;}
@@ -153,6 +173,9 @@ contract FeeCollector is IFeeCollector, AccessControl {
       _tokenInterface = IERC20(depositTokens.at(index));
 
       _currentBalance = _tokenInterface.balanceOf(address(this));
+
+      _tokenInterface.safeTransfer(address(tokenExchangeRouter), _currentBalance);
+
       
       // Only swap if balance > 0
       if (_currentBalance > 0) {
@@ -161,13 +184,21 @@ contract FeeCollector is IFeeCollector, AccessControl {
         path[0] = address(_tokenInterface);
         
         // swap token
-        uniswapRouterV2.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-          _currentBalance,
-          _minTokenOut[index], 
-          path,
+        // uniswapRouterV2.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        //   _currentBalance,
+        //   _minTokenOut[index], 
+        //   path,
+        //   address(this),
+        //   block.timestamp.add(1800)
+        // );
+        
+        tokenExchangeRouter.exchange(
+          address(_tokenInterface),
+          _minTokenOut[index],
           address(this),
-          block.timestamp.add(1800)
+          path
         );
+
       }
     }
 
@@ -175,6 +206,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     // to beneficiaries
     // the beneficiary at index 0 is the smart treasury
     wethBalance = IERC20(weth).balanceOf(address(this));
+
     if (wethBalance > 0){
       // feeBalances[0] is fee sent to smartTreasury
       uint256[] memory feeBalances = _amountsFromAllocations(allocations, wethBalance);
@@ -192,9 +224,56 @@ contract FeeCollector is IFeeCollector, AccessControl {
         crp.joinswapExternAmountIn(weth, smartTreasuryFee, _minPoolAmountOut);
       }
     }
+    emit Deposit(msg.sender, wethBalance);
+  }
+  /*
+  @author Asaf Silman
+  @notice Sets the split allocations of fees to send to fee beneficiaries
+  @dev The split allocations must sum to 100000.
+  @dev Before the split allocation is updated internally a call to `deposit()` is made
+       such that all fee accrued using the previous allocations.
+  @dev smartTreasury must be set for this to be called.
+  @param exchangeAddress The updated split ratio.
+   */
+  function setExchange(address exchangeAddress) external onlyAdmin {
+    address oldRuterAddress = address(tokenExchangeRouter);
+    ITokenExchange oldRuter = ITokenExchange(oldRuterAddress);
+
+    tokenExchangeRouter = ITokenExchange(exchangeAddress);
+    uint256 counter = depositTokens.length();
+    address _token;
+
+    for (uint256 index = 0; index < counter; index++) {
+      _token = depositTokens.at(index);
+      oldRuter.removeTokenApprove(_token);
+      tokenExchangeRouter.tokenApprove(_token, type(uint256).max);
+    }
+
+  }
+  /*
+  @author Asaf Silman
+  @notice Sets the split allocations of fees to send to fee beneficiaries
+  @dev The split allocations must sum to 100000.
+  @dev Before the split allocation is updated internally a call to `deposit()` is made
+       such that all fee accrued using the previous allocations.
+  @dev smartTreasury must be set for this to be called.
+  @param exchangeAddress The updated split ratio.
+   */
+
+  event Cooldown(uint256 _remaining, uint256 _secCooldown);
+
+  function startCooldown(address _unstakeToken) external onlyAdmin {
+    IERC20 unstakeToken = IERC20(_unstakeToken);
+
+    uint256 currentBalance = unstakeToken.balanceOf(address(this));
+
+    unstakeToken.safeTransfer(address(StakeManager), currentBalance);
+
+    StakeManager.cooldown();
+    emit Cooldown(StakeManager.stakersCooldowns(), StakeManager.COOLDOWN_SECONDS());
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Sets the split allocations of fees to send to fee beneficiaries
   @dev The split allocations must sum to 100000.
@@ -209,7 +288,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _setSplitAllocation(_allocations);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Internal function to sets the split allocations of fees to send to fee beneficiaries
   @dev The split allocations must sum to 100000.
@@ -229,7 +308,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     allocations = _allocations;
   }
 
-  /**
+  /*
   @author Andrea @ idle.finance
   @notice Helper function to deposit all tokens
    */
@@ -246,7 +325,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _deposit(depositTokensEnabled, minTokenOut, 1);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Adds an address as a beneficiary to the idle fees
   @dev The new beneficiary will be pushed to the end of the beneficiaries array.
@@ -270,7 +349,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _setSplitAllocation(_newAllocation);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice removes a beneficiary at a given index.
   @notice WARNING: when using this method be very careful to note the new allocations
@@ -305,7 +384,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _setSplitAllocation(_newAllocation);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice replaces a beneficiary at a given index with a new one
   @notice a new allocation must be passed for this method
@@ -329,7 +408,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _setSplitAllocation(_newAllocation);
   }
   
-  /**
+  /*
   @author Asaf Silman
   @notice Sets the smart treasury address.
   @dev This needs to be called atleast once to properly initialise the contract
@@ -350,7 +429,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     beneficiaries[0] = _smartTreasuryAddress;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Gives an address the WHITELISTED role. Used for calling `deposit()`.
   @dev Can only be called by admin.
@@ -360,7 +439,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     grantRole(WHITELISTED, _addressToAdd);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Removed an address from whitelist.
   @dev Can only be called by admin
@@ -370,7 +449,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     revokeRole(WHITELISTED, _addressToRemove);
   }
     
-  /**
+  /*
   @author Asaf Silman
   @notice Registers a fee token to the fee collecter
   @dev There is a maximum of 15 fee tokens than can be registered.
@@ -385,11 +464,12 @@ contract FeeCollector is IFeeCollector, AccessControl {
     require(_tokenAddress != weth, "WETH not supported"); // There is no WETH -> WETH pool in uniswap
     require(depositTokens.contains(_tokenAddress) == false, "Already exists");
 
-    IERC20(_tokenAddress).safeIncreaseAllowance(address(uniswapRouterV2), type(uint256).max); // max approval
+    // IERC20(_tokenAddress).safeIncreaseAllowance(address(uniswapRouterV2), type(uint256).max); // max approval
+    tokenExchangeRouter.tokenApprove(_tokenAddress, type(uint256).max);
     depositTokens.add(_tokenAddress);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Removed a fee token from the fee collector.
   @dev Resets uniswap approval to 0.
@@ -397,10 +477,11 @@ contract FeeCollector is IFeeCollector, AccessControl {
    */
   function removeTokenFromDepositList(address _tokenAddress) external override onlyAdmin {
     IERC20(_tokenAddress).safeApprove(address(uniswapRouterV2), 0); // 0 approval for uniswap
+    // tokenExchangeRouter.tokenApprove(_tokenAddress, 0);
     depositTokens.remove(_tokenAddress);
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Withdraws a arbitrarty ERC20 token from feeCollector to an arbitrary address.
   @param _token The ERC20 token address.
@@ -411,7 +492,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     IERC20(_token).safeTransfer(_toAddress, _amount);
   }
 
-  /**
+  /*
    * Copied from idle.finance IdleTokenGovernance.sol
    *
    * Calculate amounts from percentage allocations (100000 => 100%)
@@ -437,7 +518,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     return newAmounts;
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Exchanges balancer pool token for the underlying assets and withdraws
   @param _toAddress The address to send the underlying tokens to
@@ -481,7 +562,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     }
   }
 
-  /**
+  /*
   @author Asaf Silman
   @notice Replaces the current admin with a new admin.
   @dev The current admin rights are revoked, and given the new address.

@@ -218,7 +218,7 @@ module.exports = async function (deployer, network) {
   const USDC = await IERC20.at("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
   const WETH = await IERC20.at(_addresses.weth);
   const IDLE = await IERC20.at(_addresses.idle);
-  const DAI = await IERC20.at(_addresses.dai);
+  // DAI = await IERC20.at(_addresses.dai);
 
   await DAI.transfer(feeCollectorInstance.address, toBN("100").mul(ONE18), { from: TOKENS_HOLDER });
   await USDC.transfer(feeCollectorInstance.address, toBN("100").mul(ONE6), { from: TOKENS_HOLDER });
