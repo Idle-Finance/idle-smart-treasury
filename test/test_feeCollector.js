@@ -22,7 +22,7 @@ const addresses = require("../migrations/addresses").development
 
 const BNify = n => new BN(String(n))
 
-contract.only("FeeCollector", async accounts => {
+contract("FeeCollector", async accounts => {
   beforeEach(async function(){
     this.zeroAddress = "0x0000000000000000000000000000000000000000"
     this.nonZeroAddress = "0x0000000000000000000000000000000000000001"

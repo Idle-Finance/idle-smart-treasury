@@ -23,10 +23,6 @@ contract StakeAaveManager is IStakeManager {
     StakeAeve.cooldown();
   }
 
-  function stakersCooldowns() external override returns (uint256) {
-    return StakeAeve.stakersCooldowns(address(this));
-  }
-
   function COOLDOWN_SECONDS() external override returns (uint256) {
     return StakeAeve.COOLDOWN_SECONDS();
   }
