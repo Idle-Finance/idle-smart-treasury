@@ -42,15 +42,9 @@ contract FeeCollector is IFeeCollector, AccessControl {
   uint256 public constant MAX_NUM_FEE_TOKENS = 15; // Cap max tokens to 15
   bytes32 public constant WHITELISTED = keccak256("WHITELISTED_ROLE");
 
-  event Deposit(
-    address _from,
-    uint    _weth
-  );
+  event DepositTokens(address _depositor, uint256 _amountOut); // weth
   
-  event StartUnstakeCooldown(
-    uint256 _remaining,
-    uint256 _secCooldown
-  );
+  event UnstakeCooldown(address _token, uint256 _cooldown);
 
   modifier smartTreasurySet {
     require(beneficiaries[0]!=address(0), "Smart Treasury not set");
@@ -214,7 +208,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
         crp.joinswapExternAmountIn(weth, smartTreasuryFee, _minPoolAmountOut);
       }
     }
-    emit Deposit(msg.sender, wethBalance);
+    emit DepositTokens(msg.sender, wethBalance);
   }
   
   function setExchangeManager(address exchangeAddress) external onlyAdmin {
@@ -244,7 +238,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
     StakeManager.cooldown();
 
-    emit StartUnstakeCooldown(StakeManager.stakersCooldowns(), StakeManager.COOLDOWN_SECONDS());
+    emit UnstakeCooldown(_unstakeToken, StakeManager.COOLDOWN_SECONDS());
   }
 
   /*
