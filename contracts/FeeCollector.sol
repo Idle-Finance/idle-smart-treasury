@@ -9,7 +9,6 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
 import "./interfaces/IFeeCollector.sol";
-import "./interfaces/BalancerInterface.sol";
 import "./interfaces/IExchangeManager.sol";
 import "./interfaces/IStakeManager.sol";
 
@@ -46,10 +45,6 @@ contract FeeCollector is IFeeCollector, AccessControl {
   
   event UnstakeCooldown(address _token, uint256 _cooldown);
 
-  modifier smartTreasurySet {
-    require(beneficiaries[0]!=address(0), "Smart Treasury not set");
-    _;
-  }
 
   modifier onlyAdmin {
     require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Unauthorised");
@@ -104,14 +99,13 @@ contract FeeCollector is IFeeCollector, AccessControl {
     // configure weth address and ERC20 interface
     weth = _weth;
 
-    allocations = new uint256[](3); // setup fee split ratio
-    allocations[0] = 80000;
-    allocations[1] = 15000;
-    allocations[2] = 5000;
+    allocations = new uint256[](2); // setup fee split ratio
+    allocations[0] = 15000;
+    allocations[1] = 5000;
 
-    beneficiaries = new address[](3); // setup beneficiaries
-    beneficiaries[1] = _feeTreasuryAddress; // setup fee treasury address
-    beneficiaries[2] = _idleRebalancer; // setup fee treasury address
+    beneficiaries = new address[](2); // setup beneficiaries
+    beneficiaries[0] = _feeTreasuryAddress; // setup fee treasury address
+    beneficiaries[1] = _idleRebalancer; // setup fee treasury address
 
     address _depositToken;
     for (uint256 index = 0; index < _initialDepositTokens.length; index++) {
@@ -134,7 +128,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     bool[] memory _depositTokensEnabled,
     uint256[] memory _minTokenOut,
     uint256 _minPoolAmountOut
-  ) public override smartTreasurySet onlyWhitelisted {
+  ) public override onlyWhitelisted {
     _deposit(_depositTokensEnabled, _minTokenOut, _minPoolAmountOut);
   }
 
@@ -192,21 +186,20 @@ contract FeeCollector is IFeeCollector, AccessControl {
     wethBalance = IERC20(weth).balanceOf(address(this));
 
     if (wethBalance > 0){
-      // feeBalances[0] is fee sent to smartTreasury
       uint256[] memory feeBalances = _amountsFromAllocations(allocations, wethBalance);
-      uint256 smartTreasuryFee = feeBalances[0];
+      // uint256 smartTreasuryFee = feeBalances[0];
 
-      if (wethBalance.sub(smartTreasuryFee) > 0){
+      // if (wethBalance.sub(smartTreasuryFee) > 0){
           // NOTE: allocation starts at 1, NOT 0, since 0 is reserved for smart treasury
-          for (uint256 a_index = 1; a_index < allocations.length; a_index++){
+          for (uint256 a_index = 0; a_index < allocations.length; a_index++){
             IERC20(weth).safeTransfer(beneficiaries[a_index], feeBalances[a_index]);
           }
-        }
+        // }
 
-      if (smartTreasuryFee > 0) {
-        ConfigurableRightsPool crp = ConfigurableRightsPool(beneficiaries[0]); // the smart treasury is at index 0
-        crp.joinswapExternAmountIn(weth, smartTreasuryFee, _minPoolAmountOut);
-      }
+      // if (smartTreasuryFee > 0) {
+      //   ConfigurableRightsPool crp = ConfigurableRightsPool(beneficiaries[0]); // the smart treasury is at index 0
+      //   crp.joinswapExternAmountIn(weth, smartTreasuryFee, _minPoolAmountOut);
+      // }
     }
     emit DepositTokens(msg.sender, wethBalance);
   }
@@ -250,7 +243,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @dev smartTreasury must be set for this to be called.
   @param _allocations The updated split ratio.
    */
-  function setSplitAllocation(uint256[] calldata _allocations) external override smartTreasurySet onlyAdmin {
+  function setSplitAllocation(uint256[] calldata _allocations) external override  onlyAdmin {
     _depositAllTokens();
 
     _setSplitAllocation(_allocations);
@@ -302,7 +295,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _newBeneficiary The new beneficiary to add
   @param _newAllocation The new allocation of fees including the new beneficiary
    */
-  function addBeneficiaryAddress(address _newBeneficiary, uint256[] calldata _newAllocation) external override smartTreasurySet onlyAdmin {
+  function addBeneficiaryAddress(address _newBeneficiary, uint256[] calldata _newAllocation) external override  onlyAdmin {
     require(beneficiaries.length < MAX_BENEFICIARIES, "Max beneficiaries");
     require(_newBeneficiary!=address(0), "beneficiary cannot be 0 address");
 
@@ -337,8 +330,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _index The index of the beneficiary to remove
   @param _newAllocation The new allocation of fees removing the beneficiary. NOTE !! The order of beneficiaries will change !!
    */
-  function removeBeneficiaryAt(uint256 _index, uint256[] calldata _newAllocation) external override smartTreasurySet onlyAdmin {
-    require(_index >= 1, "Invalid beneficiary to remove");
+  function removeBeneficiaryAt(uint256 _index, uint256[] calldata _newAllocation) external override onlyAdmin {
     require(_index < beneficiaries.length, "Out of range");
     require(beneficiaries.length > MIN_BENEFICIARIES, "Min beneficiaries");
     
@@ -361,8 +353,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _newBeneficiary The new beneficiary address
   @param _newAllocation The new allocation of fees
   */
-  function replaceBeneficiaryAt(uint256 _index, address _newBeneficiary, uint256[] calldata _newAllocation) external override smartTreasurySet onlyAdmin {
-    require(_index >= 1, "Invalid beneficiary to remove");
+  function replaceBeneficiaryAt(uint256 _index, address _newBeneficiary, uint256[] calldata _newAllocation) external override  onlyAdmin {
     require(_newBeneficiary!=address(0), "Beneficiary cannot be 0 address");
 
     for (uint256 i = 0; i < beneficiaries.length; i++) {
@@ -376,26 +367,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     _setSplitAllocation(_newAllocation);
   }
   
-  /*
-  @author Asaf Silman
-  @notice Sets the smart treasury address.
-  @dev This needs to be called atleast once to properly initialise the contract
-  @dev Sets maximum approval for WETH to the new smart Treasury
-  @dev The smart treasury address cannot be the 0 address.
-  @param _smartTreasuryAddress The new smart treasury address
-   */
-  function setSmartTreasuryAddress(address _smartTreasuryAddress) external override onlyAdmin {
-    require(_smartTreasuryAddress!=address(0), "Smart treasury cannot be 0 address");
 
-    // When contract is initialised, the smart treasury address is not yet set
-    // Only call change allowance to 0 if previous smartTreasury was not the 0 address.
-    if (beneficiaries[0] != address(0)) {
-      IERC20(weth).safeApprove(beneficiaries[0], 0); // set approval for previous fee address to 0
-    }
-    // max approval for new smartTreasuryAddress
-    IERC20(weth).safeIncreaseAllowance(_smartTreasuryAddress, type(uint256).max);
-    beneficiaries[0] = _smartTreasuryAddress;
-  }
 
   /*
   @author Asaf Silman
@@ -485,50 +457,6 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
   /*
   @author Asaf Silman
-  @notice Exchanges balancer pool token for the underlying assets and withdraws
-  @param _toAddress The address to send the underlying tokens to
-  @param _amount The underlying amount of balancer pool tokens to exchange
-  */
-  function withdrawUnderlying(address _toAddress, uint256 _amount, uint256[] calldata minTokenOut) external override smartTreasurySet onlyAdmin{
-    ConfigurableRightsPool crp = ConfigurableRightsPool(beneficiaries[0]);
-    BPool smartTreasuryBPool = crp.bPool();
-
-    uint256 numTokensInPool = smartTreasuryBPool.getNumTokens();
-    require(minTokenOut.length == numTokensInPool, "Invalid length");
-
-
-    address[] memory poolTokens = smartTreasuryBPool.getCurrentTokens();
-    uint256[] memory feeCollectorTokenBalances = new uint256[](numTokensInPool);
-
-    for (uint256 i=0; i<poolTokens.length; i++) {
-      // get the balance of a poolToken of the fee collector
-      feeCollectorTokenBalances[i] = IERC20(poolTokens[i]).balanceOf(address(this));
-    }
-
-    // tokens are exitted to feeCollector
-    crp.exitPool(_amount, minTokenOut);
-
-    IERC20 tokenInterface;
-    uint256 tokenBalanceToTransfer;
-    for (uint256 i=0; i<poolTokens.length; i++) {
-      tokenInterface = IERC20(poolTokens[i]);
-
-      tokenBalanceToTransfer = tokenInterface.balanceOf(address(this)).sub( // get the new balance of token
-        feeCollectorTokenBalances[i] // subtract previous balance
-      );
-
-      if (tokenBalanceToTransfer > 0) {
-        // transfer to `_toAddress` [newBalance - oldBalance]
-        tokenInterface.safeTransfer(
-          _toAddress,
-          tokenBalanceToTransfer
-        ); // transfer to `_toAddress`
-      }
-    }
-  }
-
-  /*
-  @author Asaf Silman
   @notice Replaces the current admin with a new admin.
   @dev The current admin rights are revoked, and given the new address.
   @dev The caller must be admin (see onlyAdmin modifier).
@@ -545,7 +473,6 @@ contract FeeCollector is IFeeCollector, AccessControl {
   function isAddressAdmin(address _address) external view returns (bool) {return (hasRole(DEFAULT_ADMIN_ROLE, _address)); }
 
   function getBeneficiaries() external view returns (address[] memory) { return (beneficiaries); }
-  function getSmartTreasuryAddress() external view returns (address) { return (beneficiaries[0]); }
 
   function isTokenInDespositList(address _tokenAddress) external view returns (bool) {return (depositTokens.contains(_tokenAddress)); }
   function getNumTokensInDepositList() external view returns (uint256) {return (depositTokens.length());}
