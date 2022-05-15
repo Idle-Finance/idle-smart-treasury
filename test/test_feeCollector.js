@@ -16,7 +16,7 @@ const addresses = require("../migrations/addresses").development
 
 const BNify = n => new BN(String(n))
 
-contract.only("FeeCollector", async accounts => {
+contract("FeeCollector", async accounts => {
   beforeEach(async function(){
     const [owner] = accounts
     this.owner = owner
@@ -306,7 +306,7 @@ contract.only("FeeCollector", async accounts => {
 
   it("Should revert when calling function with onlyWhitelisted modifier from non-whitelisted address", async function() {
     let instance = this.feeCollectorInstance
-    const [other] = accounts
+    const [,other] = accounts
 
     await expectRevert(instance.deposit([], [], 0, {from: other}), "Unauthorised") // call deposit
   })
@@ -332,7 +332,6 @@ contract.only("FeeCollector", async accounts => {
     await expectRevert(instance.removeTokenFromDepositList(this.nonZeroAddress, {from: other}), "Unauthorised")
     
     await expectRevert(instance.setSplitAllocation(allocation, {from: other}), "Unauthorised")
-    await expectRevert(instance.withdrawUnderlying(this.mockDAI.address, 1, [0, 0], {from: other}), "Unauthorised")
     await expectRevert(instance.replaceAdmin(this.nonZeroAddress, {from: other}), "Unauthorised")
   })
 
