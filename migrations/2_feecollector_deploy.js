@@ -8,15 +8,15 @@ module.exports = async function (deployer, network) {
     return;
   }
 
-  _addresses = addresses[network];
+  const _addresses = addresses[network];
 
   await deployer.deploy(UniswapV2Exchange)
-  await deployer.deploy(StakeAaveManager)
+  await deployer.deploy(StakeAaveManager, _addresses.stakeAave)
 
   const exchangeManager = await UniswapV2Exchange.deployed()
   const stakeManager = await StakeAaveManager.deployed()
   
-  deployer.deploy(FeeCollector, 
+  await deployer.deploy(FeeCollector,
     _addresses.weth,
     _addresses.feeTreasuryAddress,
     _addresses.idleRebalancer,
