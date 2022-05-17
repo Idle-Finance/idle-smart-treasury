@@ -3,6 +3,10 @@ const addresses = {
     uniswapFactory: '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
     uniswapRouterAddress: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // https://uniswap.org/docs/v2/smart-contracts/router02
     stakeAave: '0x4da27a545c0c5B758a6BA100e3a049001de870f5', 
+
+    positionManagerAddress:"0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
+    uniswapV3FactoryAddress:'0x1F98431c8aD98523631AE4a59f267346ea31F984',
+    swapRouter:"0xE592427A0AEce92De3Edee1F18E0157C05861564",
     // development addresses
     weth: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
     dai: '0x6b175474e89094c44da98b954eedeac495271d0f', // https://etherscan.io/token/0x6b175474e89094c44da98b954eedeac495271d0f
