@@ -13,17 +13,46 @@ contract StakeAaveManager is IStakeManager {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
-  IStakedAave private StakeAeve;
+  IStakedAave private StkAave;
+  IERC20 private constant Aave = IERC20(0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9);
 
   constructor (address _stakeAave) {
-    StakeAeve = IStakedAave(_stakeAave);
+    StkAave = IStakedAave(_stakeAave);
   }
 
   function cooldown() external override {
-    StakeAeve.cooldown();
+    StkAave.cooldown();
   }
 
   function COOLDOWN_SECONDS() external override returns (uint256) {
-    return StakeAeve.COOLDOWN_SECONDS();
+    return StkAave.COOLDOWN_SECONDS();
+  }
+
+  function claimStaked () external override {
+    _claimStkAave();
+  }
+
+  function _claimStkAave() internal {
+
+    uint256 _stakersCooldown = StkAave.stakersCooldowns(address(this));
+      // If there is a pending cooldown:
+    if (_stakersCooldown > 0) {
+      uint256 _cooldownEnd = _stakersCooldown + StkAave.COOLDOWN_SECONDS();
+      // If it is over
+      if (_cooldownEnd < block.timestamp) {
+        // If the unstake window is active
+        if (block.timestamp - _cooldownEnd <= StkAave.UNSTAKE_WINDOW()) {
+          // redeem stkAave AND begin new cooldown
+          StkAave.redeem(address(this), type(uint256).max);
+
+          uint256 currentBa =  Aave.balanceOf(address(this));
+
+          Aave.transfer(msg.sender, currentBa);
+        }
+      } else {
+        // If it is not over, do nothing
+        return;
+      }
+    }
   }
 }

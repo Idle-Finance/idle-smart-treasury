@@ -43,7 +43,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
   event DepositTokens(address _depositor, uint256 _amountOut); // weth
   
-  event UnstakeCooldown(address _token, uint256 _cooldown);
+  event UnstakeCooldown(address _token, uint256 _amount);
 
 
   modifier onlyAdmin {
@@ -152,7 +152,6 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
     address[] memory path = new address[](2);
     path[1] = weth; // output will always be weth
-
     // iterate through all registered deposit tokens
     for (uint256 index = 0; index < counter; index++) {
       if (_depositTokensEnabled[index] == false) {continue;}
@@ -163,7 +162,6 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
       _tokenInterface.safeTransfer(address(ExchangeManager), _currentBalance);
 
-      
       // Only swap if balance > 0
       if (_currentBalance > 0) {
         // create simple route; token->WETH
@@ -176,30 +174,17 @@ contract FeeCollector is IFeeCollector, AccessControl {
           address(this),
           path
         );
-
       }
     }
 
-    // deposit all swapped WETH + the already present weth balance
-    // to beneficiaries
-    // the beneficiary at index 0 is the smart treasury
     wethBalance = IERC20(weth).balanceOf(address(this));
 
     if (wethBalance > 0){
       uint256[] memory feeBalances = _amountsFromAllocations(allocations, wethBalance);
-      // uint256 smartTreasuryFee = feeBalances[0];
 
-      // if (wethBalance.sub(smartTreasuryFee) > 0){
-          // NOTE: allocation starts at 1, NOT 0, since 0 is reserved for smart treasury
-          for (uint256 a_index = 0; a_index < allocations.length; a_index++){
-            IERC20(weth).safeTransfer(beneficiaries[a_index], feeBalances[a_index]);
-          }
-        // }
-
-      // if (smartTreasuryFee > 0) {
-      //   ConfigurableRightsPool crp = ConfigurableRightsPool(beneficiaries[0]); // the smart treasury is at index 0
-      //   crp.joinswapExternAmountIn(weth, smartTreasuryFee, _minPoolAmountOut);
-      // }
+      for (uint256 a_index = 0; a_index < allocations.length; a_index++){
+        IERC20(weth).safeTransfer(beneficiaries[a_index], feeBalances[a_index]);
+      }
     }
     emit DepositTokens(msg.sender, wethBalance);
   }
@@ -223,6 +208,8 @@ contract FeeCollector is IFeeCollector, AccessControl {
   }
 
   function startUnstakeCooldown(address _unstakeToken) external onlyAdmin {
+    require(IERC20(_unstakeToken).balanceOf(address(this)) >  0, 'NO_BALANCE_IN_THIS_TOKEN');
+
     IERC20 unstakeToken = IERC20(_unstakeToken);
 
     uint256 currentBalance = unstakeToken.balanceOf(address(this));
@@ -231,7 +218,11 @@ contract FeeCollector is IFeeCollector, AccessControl {
 
     StakeManager.cooldown();
 
-    emit UnstakeCooldown(_unstakeToken, StakeManager.COOLDOWN_SECONDS());
+    emit UnstakeCooldown(_unstakeToken, currentBalance);
+  }
+
+  function claimStakeToken() external onlyAdmin {
+    StakeManager.claimStaked();
   }
 
   /*

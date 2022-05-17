@@ -8,9 +8,13 @@ interface IStakedAave {
 
   function cooldown() external;
 
-  function claimRewards(address to, uint256 amount) external;
+  function claimRewards(address to, uint256 amount) external returns (uint256);
 
   function stakersCooldowns(address staker) external view returns (uint256);
   
   function COOLDOWN_SECONDS() external view returns (uint256);
+
+  function UNSTAKE_WINDOW() external view returns (uint256);
+
+  function balanceOf(address) external view returns (uint256);
 }
