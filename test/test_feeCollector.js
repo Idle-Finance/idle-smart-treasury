@@ -1,25 +1,35 @@
-const {BN, constants, expectRevert} = require('@openzeppelin/test-helpers')
+const {BN, constants, expectRevert} = require('@openzeppelin/test-helpers');
+const { web3 } = require('@openzeppelin/test-helpers/src/setup');
 
 const { expect } = require('chai');
 
 const FeeCollector = artifacts.require('FeeCollector')
 const IUniswapV2Router02 = artifacts.require('IUniswapV2Router02')
 const UniswapV2Exchange = artifacts.require('UniswapV2Exchange')
+const UniswapV3Exchange = artifacts.require('UniswapV3Exchange')
+
 const StakeAaveManager = artifacts.require('StakeAaveManager')
 
 const mockIDLE = artifacts.require('IDLEMock')
 const mockWETH = artifacts.require('WETHMock')
 const mockDAI = artifacts.require('DAIMock')
 const mockUSDC = artifacts.require('USDCMock')
+const ERC20abi = require("../abi/erc20")
+const IStakedAave = require('../abi/stakeAave')
+
+const { increaseTo }= require('../utilities')
+const { swap }= require('../utilities/uniswapV2')
 
 const addresses = require("../migrations/addresses").development
 
 const BNify = n => new BN(String(n))
 
-contract("FeeCollector", async accounts => {
+contract.only("FeeCollector", async accounts => {
   beforeEach(async function(){
     const [owner] = accounts
     this.owner = owner
+
+    this.provider = web3.currentProvider.HttpProvider
 
     this.zeroAddress = "0x0000000000000000000000000000000000000000"
     this.nonZeroAddress = "0x0000000000000000000000000000000000000001"
@@ -32,11 +42,14 @@ contract("FeeCollector", async accounts => {
     this.mockDAI  = await mockDAI.new() // 600 dai == 1 WETH
     this.mockIDLE  = await mockIDLE.new()
     this.mockUSDC  = await mockUSDC.new()
+    this.aaveInstance = new web3.eth.Contract(ERC20abi, addresses.aave)
+    this.stakeAaveInstance = new web3.eth.Contract(IStakedAave, addresses.stakeAave)
 
     await this.mockWETH.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
     await this.mockDAI.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
     await this.mockUSDC.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
-
+    await this.aaveInstance.methods.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256).send({from: this.owner})
+    
     this.uniswapRouterInstance = await IUniswapV2Router02.at(addresses.uniswapRouterAddress);
 
     // initialise the mockWETH/mockDAI uniswap pool
@@ -59,16 +72,16 @@ contract("FeeCollector", async accounts => {
 
     const exchangeManager = await UniswapV2Exchange.new()
 
-    const stakeManager = await StakeAaveManager.new(addresses.stakeAave)
+    this.stakeManager = await StakeAaveManager.new(addresses.stakeAave)
 
     this.feeCollectorInstance = await FeeCollector.new(
       this.mockWETH.address,
       addresses.feeTreasuryAddress,
       addresses.idleRebalancer,
-      accounts[0],
+      this.owner,
       [],
       exchangeManager.address,
-      stakeManager.address
+      this.stakeManager.address
     )
 
   })
@@ -121,7 +134,79 @@ contract("FeeCollector", async accounts => {
 
     let depositAmount = web3.utils.toWei("500")
     await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
-    await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit
+    await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit1
+    
+    let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
+    let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
+
+    let feeTreasuryWethBalanceDiff = feeTreasuryWethBalanceAfter.sub(feeTreasuryWethBalanceBefore)
+    let idleRebalancerWethBalanceDiff = idleRebalancerWethBalanceAfter.sub(idleRebalancerWethBalanceBefore)
+
+    expect(feeTreasuryWethBalanceDiff).to.be.bignumber.equal(idleRebalancerWethBalanceDiff)
+  })
+
+  it("Should cloud stake and unstake aave token and deposit tokens with split set to 50/50", async function() {
+    const COOLDOWN_SECONDS = new BN(await this.stakeAaveInstance.methods.COOLDOWN_SECONDS().call())
+
+    await swap(200, addresses.aave, addresses.weth, this.provider, this.owner)
+    
+    // initialise the mockWETH/aave uniswap pool
+    await this.uniswapRouterInstance.addLiquidity(
+      this.mockWETH.address, addresses.aave,
+      web3.utils.toWei("50"), web3.utils.toWei("150"),
+      0, 0,
+      this.owner,
+      BNify(web3.eth.getBlockNumber())
+    )
+
+    let amountToStkAave = web3.utils.toWei('10')
+
+    await this.aaveInstance.methods.approve(addresses.stakeAave, constants.MAX_UINT256).send({from: this.owner})
+    
+    await this.stakeAaveInstance.methods.stake(this.owner, amountToStkAave).send({from: this.owner, gasLimit: 400000})
+
+    const stakeAaveBalance =  await this.stakeAaveInstance.methods.balanceOf(this.owner).call()
+    
+    await this.stakeAaveInstance.methods.transfer(this.feeCollectorInstance.address, stakeAaveBalance).send({from: this.owner, gasLimit: 400000})
+
+    const tx = await this.feeCollectorInstance.startUnstakeCooldown(addresses.stakeAave)
+  
+    let feeCollectorbalanceOfStkAave = await this.stakeAaveInstance.methods.balanceOf(this.feeCollectorInstance.address).call()
+    let stakeManagerbalanceOfStkAave = await this.stakeAaveInstance.methods.balanceOf(this.stakeManager.address).call()
+    let { _amount } = tx?.logs[0]?.args
+
+    expect(feeCollectorbalanceOfStkAave).equal('0')
+    expect(stakeManagerbalanceOfStkAave).equal(_amount.toString())
+    await expectRevert(this.feeCollectorInstance.startUnstakeCooldown(addresses.stakeAave), 'NO_BALANCE_IN_THIS_TOKEN')
+
+    let feeCollectorBalanceOfAave =  await this.aaveInstance.methods.balanceOf(this.feeCollectorInstance.address).call()
+    
+    await this.feeCollectorInstance.claimStakeToken()
+
+    expect(feeCollectorBalanceOfAave).equal('0')
+
+    const stakersCooldown =  new BN(await this.stakeAaveInstance.methods.stakersCooldowns(this.stakeManager.address).call())
+    
+    const consts = new BN(1000)
+    await increaseTo(stakersCooldown.add(COOLDOWN_SECONDS).add(consts))
+    
+    await this.feeCollectorInstance.claimStakeToken()
+
+    stakeManagerbalanceOfStkAave = await this.stakeAaveInstance.methods.balanceOf(this.stakeManager.address).call()
+
+    feeCollectorBalanceOfAave =  await this.aaveInstance.methods.balanceOf(this.feeCollectorInstance.address).call()
+
+    expect(stakeManagerbalanceOfStkAave).equal('0')
+    expect(feeCollectorBalanceOfAave).equal(_amount.toString())
+
+    await this.feeCollectorInstance.setSplitAllocation([this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: accounts[0]}) // set split 50/50
+
+    await this.feeCollectorInstance.registerTokenToDepositList(this.aaveInstance._address)
+
+    let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
+    let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
+
+    await this.feeCollectorInstance.deposit([true], [0], 0, {from: accounts[0]})
 
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -130,6 +215,7 @@ contract("FeeCollector", async accounts => {
     let idleRebalancerWethBalanceDiff = idleRebalancerWethBalanceAfter.sub(idleRebalancerWethBalanceBefore)
 
     expect(feeTreasuryWethBalanceDiff).to.be.bignumber.equal(idleRebalancerWethBalanceDiff)
+
   })
   it("Should change the Exchange Manager", async function () {
     let instance = this.feeCollectorInstance
