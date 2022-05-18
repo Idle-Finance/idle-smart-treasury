@@ -15,7 +15,7 @@ contract UniswapV3Exchange is IExchangeManager {
 
   ISwapRouter private constant uniswapRouterV3 = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
-  uint24 public constant poolFee = 3000;
+  uint24 public constant poolFee = 500;
 
   function exchange(address token, uint amountOut, address to, address[] calldata path) external override {
 

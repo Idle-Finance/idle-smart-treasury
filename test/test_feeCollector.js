@@ -18,13 +18,14 @@ const ERC20abi = require("../abi/erc20")
 const IStakedAave = require('../abi/stakeAave')
 
 const { increaseTo }= require('../utilities')
-const { swap }= require('../utilities/uniswapV2')
+const { swap: swapUniswapV2 }= require('../utilities/uniswapV2')
+const { addLiquidity: addLiquidityUniswapV3}= require('../utilities/uniswapV3')
 
 const addresses = require("../migrations/addresses").development
 
 const BNify = n => new BN(String(n))
 
-contract.only("FeeCollector", async accounts => {
+contract("FeeCollector", async accounts => {
   beforeEach(async function(){
     const [owner] = accounts
     this.owner = owner
@@ -122,9 +123,10 @@ contract.only("FeeCollector", async accounts => {
   it("Should deposit tokens with split set to 50/50", async function() {
     let instance = this.feeCollectorInstance
 
-    await instance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: accounts[0]}) // set split 50/50
+    await instance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.owner
+    }) // set split 50/50
 
-    await instance.registerTokenToDepositList(this.mockDAI.address, {from: accounts[0]}) // whitelist dai
+    await instance.registerTokenToDepositList(this.mockDAI.address, {from: this.owner}) // whitelist dai
 
     let depositTokens = await instance.getDepositTokens.call()
     expect(depositTokens.length).to.be.equal(1) // called with no tokens
@@ -133,8 +135,8 @@ contract.only("FeeCollector", async accounts => {
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
     let depositAmount = web3.utils.toWei("500")
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
-    await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit1
+    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
+    await instance.deposit([true], [0], 0, {from: this.owner}) // call deposit1
     
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -148,7 +150,7 @@ contract.only("FeeCollector", async accounts => {
   it("Should cloud stake and unstake aave token and deposit tokens with split set to 50/50", async function() {
     const COOLDOWN_SECONDS = new BN(await this.stakeAaveInstance.methods.COOLDOWN_SECONDS().call())
 
-    await swap(200, addresses.aave, addresses.weth, this.provider, this.owner)
+    await swapUniswapV2(200, addresses.aave, addresses.weth, this.provider, this.owner)
     
     // initialise the mockWETH/aave uniswap pool
     await this.uniswapRouterInstance.addLiquidity(
@@ -199,14 +201,14 @@ contract.only("FeeCollector", async accounts => {
     expect(stakeManagerbalanceOfStkAave).equal('0')
     expect(feeCollectorBalanceOfAave).equal(_amount.toString())
 
-    await this.feeCollectorInstance.setSplitAllocation([this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: accounts[0]}) // set split 50/50
+    await this.feeCollectorInstance.setSplitAllocation([this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.owner}) 
 
     await this.feeCollectorInstance.registerTokenToDepositList(this.aaveInstance._address)
 
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
-    await this.feeCollectorInstance.deposit([true], [0], 0, {from: accounts[0]})
+    await this.feeCollectorInstance.deposit([true], [0], 0, {from: this.owner})
 
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -217,25 +219,29 @@ contract.only("FeeCollector", async accounts => {
     expect(feeTreasuryWethBalanceDiff).to.be.bignumber.equal(idleRebalancerWethBalanceDiff)
 
   })
-  it("Should change the Exchange Manager", async function () {
-    let instance = this.feeCollectorInstance
 
-    await instance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: accounts[0]}) // set split 50/50
+  it("Should change the Exchange Manager and deposit tokens with split set to 50/50", async function () {
 
-    await instance.registerTokenToDepositList(this.mockDAI.address, {from: accounts[0]}) // whitelist dai
+    await addLiquidityUniswapV3(this.mockDAI.address, this.mockWETH.address, 500, this.owner, web3.utils.toWei('50'))
     
-    const newUniswapV2Exchange = await UniswapV2Exchange.new()
-
-    await instance.setExchangeManager(newUniswapV2Exchange.address, {from: accounts[0]})
-
+    let instance = this.feeCollectorInstance
+    
+    await instance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.owner}) // set split 50/50
+    
+    await instance.registerTokenToDepositList(this.mockDAI.address, {from: this.owner}) // whitelist dai
+    
+    const uniswapV3Exchange = await UniswapV3Exchange.new()
+    
+    await instance.setExchangeManager(uniswapV3Exchange.address, {from: this.owner})
+    
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
-
-    let depositAmount = web3.utils.toWei("500")
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
-
-    await instance.deposit([true], [0], 0, {from: accounts[0]}) // call deposit
-
+    
+    let depositAmount = web3.utils.toWei("30")
+    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner})
+    
+    await instance.deposit([true], [0], 0, {from: this.owner})
+    
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
@@ -270,12 +276,12 @@ contract.only("FeeCollector", async accounts => {
         this.mockWETH.address, token.address,
         web3.utils.toWei("100"), web3.utils.toWei("60000"), // 600,000 DAI deposit into pool
         0, 0,
-        accounts[0],
+        this.owner,
         BNify(web3.eth.getBlockNumber())
       )
 
       let depositAmount = web3.utils.toWei("500")
-      await token.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
+      await token.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
       tokensEnables.push(true);
       minTokenBalance.push(1)
     }
@@ -428,12 +434,12 @@ contract.only("FeeCollector", async accounts => {
     let isDaiInDepositListFromBootstrap = await instance.isTokenInDespositList.call(mockDaiAddress)
     assert.isFalse(isDaiInDepositListFromBootstrap)
 
-    await instance.registerTokenToDepositList(mockDaiAddress, {from: accounts[0]})
+    await instance.registerTokenToDepositList(mockDaiAddress, {from: this.owner})
     
     let daiInDepositList = await instance.isTokenInDespositList.call(mockDaiAddress)
     assert.isTrue(daiInDepositList)
 
-    await instance.removeTokenFromDepositList(mockDaiAddress, {from: accounts[0]})
+    await instance.removeTokenFromDepositList(mockDaiAddress, {from: this.owner})
     let daiNoLongerInDepositList = await instance.isTokenInDespositList.call(mockDaiAddress)
     assert.isFalse(daiNoLongerInDepositList)
   })
@@ -463,11 +469,11 @@ contract.only("FeeCollector", async accounts => {
     let before = await instance.isAddressWhitelisted(this.nonZeroAddress)
     expect(before, "Address should not be whitelisted initially").to.be.false
 
-    await instance.addAddressToWhiteList(this.nonZeroAddress, {from: accounts[0]})
+    await instance.addAddressToWhiteList(this.nonZeroAddress, {from: this.owner})
     let after = await instance.isAddressWhitelisted(this.nonZeroAddress)
     expect(after, "Address should now be whitelisted").to.be.true
 
-    await instance.removeAddressFromWhiteList(this.nonZeroAddress, {from: accounts[0]})
+    await instance.removeAddressFromWhiteList(this.nonZeroAddress, {from: this.owner})
     let final = await instance.isAddressWhitelisted(this.nonZeroAddress)
     expect(final, "Address should not be whitelisted").to.be.false
   })
@@ -477,7 +483,7 @@ contract.only("FeeCollector", async accounts => {
 
     let depositAmount = web3.utils.toWei("500")
 
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: accounts[0]}) // 500 DAI
+    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
 
     await instance.withdraw(this.mockDAI.address, this.nonZeroAddress, depositAmount)
     let daiBalance = await this.mockDAI.balanceOf.call(this.nonZeroAddress)
