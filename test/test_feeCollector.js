@@ -1,4 +1,6 @@
 const {BN, constants, expectRevert} = require('@openzeppelin/test-helpers');
+const contractT = require("@truffle/contract");
+
 const { web3 } = require('@openzeppelin/test-helpers/src/setup');
 
 const { expect } = require('chai');
@@ -20,7 +22,7 @@ const IStakedAave = require('../abi/stakeAave')
 const { increaseTo }= require('../utilities')
 const { swap: swapUniswapV2 }= require('../utilities/uniswapV2')
 const { addLiquidity: addLiquidityUniswapV3}= require('../utilities/uniswapV3')
-
+const {deployProxy} = require('../utilities/proxy')
 const addresses = require("../migrations/addresses").development
 
 const BNify = n => new BN(String(n))
@@ -75,7 +77,7 @@ contract("FeeCollector", async accounts => {
 
     this.stakeManager = await StakeAaveManager.new(addresses.stakeAave)
 
-    this.feeCollectorInstance = await FeeCollector.new(
+    const initializationArgs = [
       this.mockWETH.address,
       addresses.feeTreasuryAddress,
       addresses.idleRebalancer,
@@ -83,11 +85,28 @@ contract("FeeCollector", async accounts => {
       [],
       exchangeManager.address,
       this.stakeManager.address
-    )
+    ]
 
+    const {implementationInstance, TransparentUpgradableProxy} = await deployProxy(FeeCollector,initializationArgs, this.owner, accounts[1])
+    this.TransparentUpgradableProxy = TransparentUpgradableProxy
+    this.feeCollectorInstance = implementationInstance
   })
 
+  it("Should replace proxy admin", async function () {
     
+    const adminBefore = await this.TransparentUpgradableProxy.admin.call({from: this.owner})
+    await this.TransparentUpgradableProxy.changeAdmin(accounts[1], {from: this.owner})
+    const adminAfter = await this.TransparentUpgradableProxy.admin.call({from: accounts[1]})
+    expect(adminAfter).to.not.eq(adminBefore)
+})
+    
+it("Should upgrade the contract implementation", async function () {
+    const implementationBefore = await this.TransparentUpgradableProxy.implementation.call({from: this.owner})
+    await this.TransparentUpgradableProxy.upgradeTo(this.feeCollectorInstance.address, {from: this.owner})
+    const implementationAfter = await this.TransparentUpgradableProxy.implementation.call({from: this.owner})
+    expect(implementationAfter).to.not.eq(implementationBefore)
+  })
+
   it("Should correctly deploy", async function() {
     const [,otherAddress] = accounts
     let instance = this.feeCollectorInstance

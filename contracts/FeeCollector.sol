@@ -2,11 +2,12 @@
 pragma solidity = 0.7.5;
 pragma experimental ABIEncoderV2;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/utils/EnumerableSet.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/EnumerableSetUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/SafeERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 
 import "./interfaces/IFeeCollector.sol";
 import "./interfaces/IExchangeManager.sol";
@@ -18,18 +19,19 @@ import "./interfaces/IStakeManager.sol";
 @author Asaf Silman
 @notice Receives fees from idle strategy tokens and routes to fee treasury and smart treasury
  */
-contract FeeCollector is IFeeCollector, AccessControl {
-  using EnumerableSet for EnumerableSet.AddressSet;
-  using SafeMath for uint256;
-  using SafeERC20 for IERC20;
+// contract FeeCollector is IFeeCollector, AccessControl {
+contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable {
+  using EnumerableSetUpgradeable for EnumerableSetUpgradeable.AddressSet;
+  using SafeMathUpgradeable for uint256;
+  using SafeERC20Upgradeable for IERC20Upgradeable;
 
   IExchangeManager private ExchangeManager;
   IStakeManager private StakeManager;
 
-  address private immutable weth;
+  address private weth;
 
   // Need to use openzeppelin enumerableset
-  EnumerableSet.AddressSet private depositTokens;
+  EnumerableSetUpgradeable.AddressSet private depositTokens;
 
   uint256[] private allocations; // 100000 = 100%. allocation sent to beneficiaries
   address[] private beneficiaries; // Who are the beneficiaries of the fees generated from IDLE. The first beneficiary is always going to be the smart treasury
@@ -70,7 +72,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _initialDepositTokens The initial tokens to register with the fee deposit
   @param _router the router
   */
-  constructor (
+  function initialize(
     address _weth,
     address _feeTreasuryAddress,
     address _idleRebalancer,
@@ -78,15 +80,15 @@ contract FeeCollector is IFeeCollector, AccessControl {
     address[] memory _initialDepositTokens,
     address _exchangeManager,
     address _stakeManager
-  ) {
+  ) initializer public {
     require(_weth != address(0), "WETH cannot be the 0 address");
     require(_feeTreasuryAddress != address(0), "Fee Treasury cannot be 0 address");
     require(_idleRebalancer != address(0), "Rebalancer cannot be 0 address");
     require(_multisig != address(0), "Multisig cannot be 0 address");
     require(_exchangeManager != address(0), "Exchange Manager cannot be 0 address");
     require(_stakeManager != address(0), "Stake Manager cannot be 0 address");
-
     require(_initialDepositTokens.length <= MAX_NUM_FEE_TOKENS);
+    __AccessControl_init();
     
     _setupRole(DEFAULT_ADMIN_ROLE, _multisig); // setup multisig as admin
     _setupRole(WHITELISTED, _multisig); // setup multisig as whitelisted address
@@ -146,7 +148,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     require(_minTokenOut.length == counter, "Invalid length");
 
     uint256 _currentBalance;
-    IERC20 _tokenInterface;
+    IERC20Upgradeable _tokenInterface;
 
     uint256 wethBalance;
 
@@ -156,7 +158,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
     for (uint256 index = 0; index < counter; index++) {
       if (_depositTokensEnabled[index] == false) {continue;}
 
-      _tokenInterface = IERC20(depositTokens.at(index));
+      _tokenInterface = IERC20Upgradeable(depositTokens.at(index));
 
       _currentBalance = _tokenInterface.balanceOf(address(this));
 
@@ -177,13 +179,13 @@ contract FeeCollector is IFeeCollector, AccessControl {
       }
     }
 
-    wethBalance = IERC20(weth).balanceOf(address(this));
+    wethBalance = IERC20Upgradeable(weth).balanceOf(address(this));
 
     if (wethBalance > 0){
       uint256[] memory feeBalances = _amountsFromAllocations(allocations, wethBalance);
 
       for (uint256 a_index = 0; a_index < allocations.length; a_index++){
-        IERC20(weth).safeTransfer(beneficiaries[a_index], feeBalances[a_index]);
+        IERC20Upgradeable(weth).safeTransfer(beneficiaries[a_index], feeBalances[a_index]);
       }
     }
     emit DepositTokens(msg.sender, wethBalance);
@@ -208,9 +210,9 @@ contract FeeCollector is IFeeCollector, AccessControl {
   }
 
   function startUnstakeCooldown(address _unstakeToken) external onlyAdmin {
-    require(IERC20(_unstakeToken).balanceOf(address(this)) >  0, 'NO_BALANCE_IN_THIS_TOKEN');
+    require(IERC20Upgradeable(_unstakeToken).balanceOf(address(this)) >  0, 'NO_BALANCE_IN_THIS_TOKEN');
 
-    IERC20 unstakeToken = IERC20(_unstakeToken);
+    IERC20Upgradeable unstakeToken = IERC20Upgradeable(_unstakeToken);
 
     uint256 currentBalance = unstakeToken.balanceOf(address(this));
 
@@ -417,7 +419,7 @@ contract FeeCollector is IFeeCollector, AccessControl {
   @param _amount The amount to transfer.
    */
   function withdraw(address _token, address _toAddress, uint256 _amount) external override onlyAdmin {
-    IERC20(_token).safeTransfer(_toAddress, _amount);
+    IERC20Upgradeable(_token).safeTransfer(_toAddress, _amount);
   }
 
   /*
