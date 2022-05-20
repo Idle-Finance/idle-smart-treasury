@@ -2,19 +2,27 @@
 pragma solidity 0.7.5;
 
 import '@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol';
+import '@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol';
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-import './interfaces/IExchangeManager.sol';
+import './interfaces/IExchange.sol';
 
-contract UniswapV2Exchange is IExchangeManager {
+contract UniswapV2Exchange is IExchange {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
-  IUniswapV2Router02 private constant uniswapRouterV2 = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
+  IUniswapV2Router02 private immutable uniswapRouterV2;
+  IUniswapV2Factory private immutable factory;
 
-  function exchange(address token, uint amountOut, address to, address[] calldata path) external override {
+  constructor(address factory_, address router_) {
+      factory = IUniswapV2Factory(factory_);
+      uniswapRouterV2 = IUniswapV2Router02(router_);
+  }
+
+  function exchange(address token, uint amountOut, address to, address[] calldata path, bytes memory data) external override {
 
     uint256 amountIn = IERC20(token).balanceOf(address(this));
 
@@ -25,6 +33,34 @@ contract UniswapV2Exchange is IExchangeManager {
       to,
       block.timestamp.add(1800)
     );
+  }
+
+  function sortTokens(address tokenA, address tokenB) internal pure returns (address token0, address token1) {
+      require(tokenA != tokenB, 'IDENTICAL_ADDRESSES');
+      (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+      require(token0 != address(0), 'ZERO_ADDRESS');
+  }
+
+  function getAmoutOut(address tokenA, address tokenB, uint amountIn) external override returns (uint amountOut, bytes memory data) {
+    (address token0,) = sortTokens(tokenA, tokenB);
+
+    address pairAddress = factory.getPair(tokenA, tokenB);
+
+    require(pairAddress != address(0));
+
+    (uint reserve0, uint reserve1,) = IUniswapV2Pair(pairAddress).getReserves();
+
+    (uint reserveA, uint reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
+
+    uint amountInWithFee = amountIn.mul(997);
+
+    uint numerator = amountInWithFee.mul(reserveB);
+
+    uint denominator = reserveA.mul(1000).add(amountInWithFee);
+
+    amountOut = numerator.div(denominator);
+
+    data = abi.encode();
   }
 
   function approveToken(address _depositToken, uint256 amount) external override {
