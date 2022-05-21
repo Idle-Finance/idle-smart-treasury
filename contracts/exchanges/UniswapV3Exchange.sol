@@ -2,13 +2,14 @@
 pragma solidity 0.7.5;
 pragma abicoder v2;
 
-import '@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol';
-import '@uniswap/v3-periphery/contracts/interfaces/IQuoter.sol';
+import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/IQuoter.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-import '../interfaces/IExchange.sol';
+import "../interfaces/IExchange.sol";
 
 contract UniswapV3Exchange is IExchange {
   using SafeMath for uint256;
@@ -16,13 +17,15 @@ contract UniswapV3Exchange is IExchange {
 
   ISwapRouter private immutable uniswapRouterV3;
   IQuoter private immutable uniswapQuoterV3;
+  IUniswapV3Factory private immutable uniswapFactoryV3;
 
   uint24[] private poolFees; 
 
-  constructor(address _router, address _quoter) {
+  constructor(address _router, address _quoter, address _factory) {
 
     uniswapRouterV3 = ISwapRouter(_router);
     uniswapQuoterV3 = IQuoter(_quoter);
+    uniswapFactoryV3 = IUniswapV3Factory(_factory);
 
     poolFees = new uint24[](3); 
     poolFees[0] = 500;
@@ -58,10 +61,13 @@ contract UniswapV3Exchange is IExchange {
 
   function getAmoutOut(address tokenA, address tokenB, uint amountIn) external override returns (uint amountOut, bytes memory data) {
     uint256 _currentAmountOut;
-    uint256 _MaxAmountOut = type(uint256).min;
+    uint256 _MaxAmountOut = 0;
     uint24 _fee;
 
     for (uint256 index = 0; index < poolFees.length; index++) {
+      if(uniswapFactoryV3.getPool(tokenA, tokenB, poolFees[index]) == address(0)) {
+        continue;
+      }
       _currentAmountOut =  uniswapQuoterV3.quoteExactInputSingle(tokenA, tokenB, poolFees[index], amountIn, 0);
 
       if(_currentAmountOut > _MaxAmountOut)  {

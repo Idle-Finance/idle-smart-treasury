@@ -92,7 +92,7 @@ contract("FeeCollector", async accounts => {
     expect(implementationAfter).to.not.eq(implementationBefore)
   })
 
-  it.only("Should correctly deploy", async function() {
+  it("Should correctly deploy", async function() {
     let allocation = await this.feeCollectorInstance.getSplitAllocation.call()
 
     let deployerAddressWhitelisted = await this.feeCollectorInstance.isAddressWhitelisted.call(this.feeCollectorOwner)
@@ -121,7 +121,7 @@ contract("FeeCollector", async accounts => {
     assert.equal(beneficiaries[1].toLowerCase(), addresses.idleRebalancer.toLowerCase())
   })
 
-  it.only("Should deposit tokens with split set to 50/50", async function() {
+  it("Should deposit tokens with split set to 50/50", async function() {
 
     await this.feeCollectorInstance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))])
 
@@ -214,24 +214,23 @@ contract("FeeCollector", async accounts => {
 
   it("Should change the Exchange Manager and deposit tokens with split set to 50/50", async function () {
 
-    await addLiquidityUniswapV3(this.mockDAI.address, this.mockWETH.address, 500, this.feeCollectorOwner, web3.utils.toWei('50'))
+    await addLiquidityUniswapV3(this.mockDAI.address, this.mockWETH.address, 500, this.feeCollectorOwner, web3.utils.toWei('100'))
     
     await this.feeCollectorInstance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.feeCollectorOwner})
     
     await this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address, {from: this.feeCollectorOwner}) 
     
-    const uniswapV3Exchange = await UniswapV3Exchange.new(addresses.swapRouter, addresses.quoter)
+    const uniswapV3Exchange = await UniswapV3Exchange.new(addresses.swapRouter, addresses.quoter, addresses.uniswapV3FactoryAddress)
     
     await this.feeCollectorInstance.addExchangeManager(uniswapV3Exchange.address, {from: this.feeCollectorOwner})
 
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
     
-    let depositAmount = web3.utils.toWei("30")
+    let depositAmount = web3.utils.toWei("50")
     await this.mockDAI.transfer(this.feeCollectorInstance.address, depositAmount, {from: this.feeCollectorOwner})
-    
     await this.feeCollectorInstance.deposit([true], [0], {from: this.feeCollectorOwner})
-    
+
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
@@ -456,7 +455,7 @@ contract("FeeCollector", async accounts => {
   it("Should not be able to add duplicate deposit token", async function() {
 
     await this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address)
-    await expectRevert(this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address), "Already exists")
+    await expectRevert(this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address), "Duplicate deposit token")
 
     let totalDepositTokens = await this.feeCollectorInstance.getNumTokensInDepositList.call()
     expect(totalDepositTokens).to.be.bignumber.equal(BNify('1'))

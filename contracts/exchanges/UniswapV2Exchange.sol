@@ -44,7 +44,14 @@ contract UniswapV2Exchange is IExchange {
   function getAmoutOut(address tokenA, address tokenB, uint amountIn) external override returns (uint amountOut, bytes memory data) {
     (address token0,) = sortTokens(tokenA, tokenB);
     address pairAddress = factory.getPair(tokenA, tokenB);
-    require(pairAddress != address(0));
+
+    data = abi.encode();
+    
+    if(pairAddress == address(0)) {
+      amountOut = 0;
+      return (amountOut, data);
+    }
+
 
     (uint reserve0, uint reserve1,) = IUniswapV2Pair(pairAddress).getReserves();
     (uint reserveA, uint reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
@@ -53,8 +60,6 @@ contract UniswapV2Exchange is IExchange {
     uint numerator = amountInWithFee.mul(reserveB);
     uint denominator = reserveA.mul(1000).add(amountInWithFee);
     amountOut = numerator.div(denominator);
-
-    data = abi.encode();
   }
 
   function approveToken(address _depositToken, uint256 amount) external override {
