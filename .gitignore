@@ -5,7 +5,6 @@ node_modules/
 coverage.json
 coverage/
 .coverage*/
-
-*.secret
-.TODO
 .openzeppelin
+
+.env

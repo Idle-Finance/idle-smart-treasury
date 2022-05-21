@@ -6,7 +6,7 @@ const { abi: ERC20 }  = require('@openzeppelin/contracts/build/contracts/ERC20.j
 const { web3 } = require('@openzeppelin/test-helpers/src/setup')
 const bn = require('bignumber.js')
 const {constants} = require('@openzeppelin/test-helpers');
-const addresses = require('../../migrations/addresses').development
+const addresses = require('../../../constants/addresses').development
 
 bn.config({ EXPONENTIAL_AT: 999999, DECIMAL_PLACES: 40 })
 

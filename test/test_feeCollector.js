@@ -12,11 +12,11 @@ const mockERC20 = artifacts.require('ERC20Mock')
 
 const IStakedAave = artifacts.require('IStakedAave')
 
-const { increaseTo }= require('../utilities')
-const { swap: swapUniswapV2 }= require('../utilities/uniswapV2')
-const { addLiquidity: addLiquidityUniswapV3}= require('../utilities/uniswapV3')
+const { increaseTo }= require('../utilities/rpc')
+const { swap: swapUniswapV2 }= require('../utilities/exchanges/uniswapV2')
+const { addLiquidity: addLiquidityUniswapV3}= require('../utilities/exchanges/uniswapV3')
 const {deployProxy} = require('../utilities/proxy')
-const addresses = require("../migrations/addresses").development
+const addresses = require("../constants/addresses").development
 const { abi: ERC20abi} = require('@openzeppelin/contracts/build/contracts/ERC20.json')
 
 const BNify = n => new BN(String(n))

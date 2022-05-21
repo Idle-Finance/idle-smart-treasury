@@ -1,5 +1,5 @@
 const { Fetcher, Route, Trade, TokenAmount, TradeType, ChainId, Percent } = require('@uniswap/sdk')
-const addresses = require('../../migrations/addresses').development
+const addresses = require('../../../constants/addresses').development
 const IUniswapV2Router02 = artifacts.require('IUniswapV2Router02')
 
 const toHex = (Amount) => `0x${Amount.raw.toString(16)}`
