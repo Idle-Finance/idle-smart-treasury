@@ -22,10 +22,6 @@ contract StakeAaveManager is IStakeManager {
     Aave = IERC20(_aave);
   }
 
-  function cooldown() external override {
-    StkAave.cooldown();
-  }
-
   function COOLDOWN_SECONDS() external override returns (uint256) {
     return StkAave.COOLDOWN_SECONDS();
   }
@@ -35,7 +31,6 @@ contract StakeAaveManager is IStakeManager {
   }
 
   function _claimStkAave() internal {
-
     uint256 _stakersCooldown = StkAave.stakersCooldowns(address(this));
       // If there is a pending cooldown:
     if (_stakersCooldown > 0) {
@@ -56,5 +51,22 @@ contract StakeAaveManager is IStakeManager {
         return;
       }
     }
+
+    // If there's no pending cooldown or we just redeem the prev locked rewards,
+    // then begin a new cooldown
+    if (StkAave.balanceOf(address(this)) > 0) {
+      // start a new cooldown
+      StkAave.cooldown();
+    }
   }
+
+  function token() external view  override returns (address) {
+    return address(Aave);
+  }
+
+  function stakedToken() external view override returns (address) {
+    return address(StkAave);
+  }
+
+
 }

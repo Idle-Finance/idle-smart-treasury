@@ -20,11 +20,11 @@ module.exports = async function (deployer, network) {
 
   const initializationArgs = [
     _addresses.weth,
-    _addresses.feeTreasuryAddress,
-    _addresses.idleRebalancer,
+    [addresses.feeTreasuryAddress, addresses.idleRebalancer],
+    [80000, 20000],
     _addresses.feeTokens,
-    exchangeManager.address,
-    stakeManager.address
+    [exchangeManager.address],
+    [stakeManager.address]
   ]
   
   await deployProxy(FeeCollector, initializationArgs, accounts[0], accounts[1])
