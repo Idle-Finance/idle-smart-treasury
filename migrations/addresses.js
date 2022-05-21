@@ -12,11 +12,7 @@ const addresses = {
     weth: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
     dai: '0x6b175474e89094c44da98b954eedeac495271d0f', // https://etherscan.io/token/0x6b175474e89094c44da98b954eedeac495271d0f
     idle: '0x875773784Af8135eA0ef43b5a374AaD105c5D39e', // https://developers.idle.finance/contracts-and-codebase
-    aave: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',  // https://etherscan.io/token/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9        
-    // https://docs.balancer.finance/smart-contracts/addresses
-    balancerCoreFactory: '0x9424B1412450D0f8Fc2255FAf6046b98213B76Bd',
-    balancerCRPFactory: '0xed52D8E202401645eDAD1c0AA21e872498ce47D0',
-    
+    aave: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',  // https://etherscan.io/token/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 
     // idle contracts
     feeTreasuryAddress: '0x69a62C24F16d4914a48919613e8eE330641Bcb94', // https://developers.idle.finance/contracts-and-codebase
     ecosystemFund: '0xb0aA1f98523Ec15932dd5fAAC5d86e57115571C7',
@@ -60,9 +56,6 @@ const addresses = {
     weth: '0xd0a1e359811322d97991e03f863a0c30c2cf029c',
     dai: '0x4F96Fe3b7A6Cf9725f59d353F723c1bDb64CA6Aa',
     idle: '0xAB6Bdb5CCF38ECDa7A92d04E86f7c53Eb72833dF',
-
-    balancerCoreFactory: '0x8f7F78080219d4066A8036ccD30D588B416a40DB',
-    balancerCRPFactory: '0x53265f0e014995363AE54DAd7059c018BaDbcD74',
 
     feeTreasuryAddress: '0x69a62C24F16d4914a48919613e8eE330641Bcb94',
     ecosystemFund: '0xb0aA1f98523Ec15932dd5fAAC5d86e57115571C7',

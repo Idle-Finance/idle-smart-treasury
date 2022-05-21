@@ -9,8 +9,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/SafeERC20Upgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 
-import "./interfaces/IFeeCollector.sol";
-import "./interfaces/IExchangeManager.sol";
+import "./interfaces/IExchange.sol";
 import "./interfaces/IStakeManager.sol";
 
 
@@ -20,12 +19,12 @@ import "./interfaces/IStakeManager.sol";
 @notice Receives fees from idle strategy tokens and routes to fee treasury and smart treasury
  */
 // contract FeeCollector is IFeeCollector, AccessControl {
-contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable {
+contract FeeCollector is Initializable, AccessControlUpgradeable {
   using EnumerableSetUpgradeable for EnumerableSetUpgradeable.AddressSet;
   using SafeMathUpgradeable for uint256;
   using SafeERC20Upgradeable for IERC20Upgradeable;
 
-  IExchangeManager private ExchangeManager;
+  IExchange private ExchangeManager;
   IStakeManager private StakeManager;
 
   address private weth;
@@ -76,7 +75,6 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
     address _weth,
     address _feeTreasuryAddress,
     address _idleRebalancer,
-    address _multisig,
     address[] memory _initialDepositTokens,
     address _exchangeManager,
     address _stakeManager
@@ -84,17 +82,15 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
     require(_weth != address(0), "WETH cannot be the 0 address");
     require(_feeTreasuryAddress != address(0), "Fee Treasury cannot be 0 address");
     require(_idleRebalancer != address(0), "Rebalancer cannot be 0 address");
-    require(_multisig != address(0), "Multisig cannot be 0 address");
     require(_exchangeManager != address(0), "Exchange Manager cannot be 0 address");
     require(_stakeManager != address(0), "Stake Manager cannot be 0 address");
     require(_initialDepositTokens.length <= MAX_NUM_FEE_TOKENS);
     __AccessControl_init();
     
-    _setupRole(DEFAULT_ADMIN_ROLE, _multisig); // setup multisig as admin
-    _setupRole(WHITELISTED, _multisig); // setup multisig as whitelisted address
-    _setupRole(WHITELISTED, _idleRebalancer); // setup multisig as whitelisted address
+    _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    _setupRole(WHITELISTED, msg.sender);
     
-    ExchangeManager = IExchangeManager(_exchangeManager);
+    ExchangeManager = IExchange(_exchangeManager);
 
     StakeManager = IStakeManager(_stakeManager);
 
@@ -130,7 +126,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
     bool[] memory _depositTokensEnabled,
     uint256[] memory _minTokenOut,
     uint256 _minPoolAmountOut
-  ) public override onlyWhitelisted {
+  ) public onlyWhitelisted {
     _deposit(_depositTokensEnabled, _minTokenOut, _minPoolAmountOut);
   }
 
@@ -169,12 +165,13 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
         // create simple route; token->WETH
         
         path[0] = address(_tokenInterface);
-        
+        bytes memory data = abi.encode();
         ExchangeManager.exchange(
           address(_tokenInterface),
           _minTokenOut[index],
           address(this),
-          path
+          path,
+          data
         );
       }
     }
@@ -194,9 +191,9 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   function setExchangeManager(address exchangeAddress) external onlyAdmin {
     address oldExchangeManagerAddress = address(ExchangeManager);
 
-    IExchangeManager oldExchangeManager = IExchangeManager(oldExchangeManagerAddress);
+    IExchange oldExchangeManager = IExchange(oldExchangeManagerAddress);
 
-    ExchangeManager = IExchangeManager(exchangeAddress);
+    ExchangeManager = IExchange(exchangeAddress);
 
     address _tokenAddress;
 
@@ -236,7 +233,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @dev smartTreasury must be set for this to be called.
   @param _allocations The updated split ratio.
    */
-  function setSplitAllocation(uint256[] calldata _allocations) external override  onlyAdmin {
+  function setSplitAllocation(uint256[] calldata _allocations) external onlyAdmin {
     _depositAllTokens();
 
     _setSplitAllocation(_allocations);
@@ -288,7 +285,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @param _newBeneficiary The new beneficiary to add
   @param _newAllocation The new allocation of fees including the new beneficiary
    */
-  function addBeneficiaryAddress(address _newBeneficiary, uint256[] calldata _newAllocation) external override  onlyAdmin {
+  function addBeneficiaryAddress(address _newBeneficiary, uint256[] calldata _newAllocation) external onlyAdmin {
     require(beneficiaries.length < MAX_BENEFICIARIES, "Max beneficiaries");
     require(_newBeneficiary!=address(0), "beneficiary cannot be 0 address");
 
@@ -323,7 +320,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @param _index The index of the beneficiary to remove
   @param _newAllocation The new allocation of fees removing the beneficiary. NOTE !! The order of beneficiaries will change !!
    */
-  function removeBeneficiaryAt(uint256 _index, uint256[] calldata _newAllocation) external override onlyAdmin {
+  function removeBeneficiaryAt(uint256 _index, uint256[] calldata _newAllocation) external onlyAdmin {
     require(_index < beneficiaries.length, "Out of range");
     require(beneficiaries.length > MIN_BENEFICIARIES, "Min beneficiaries");
     
@@ -346,7 +343,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @param _newBeneficiary The new beneficiary address
   @param _newAllocation The new allocation of fees
   */
-  function replaceBeneficiaryAt(uint256 _index, address _newBeneficiary, uint256[] calldata _newAllocation) external override  onlyAdmin {
+  function replaceBeneficiaryAt(uint256 _index, address _newBeneficiary, uint256[] calldata _newAllocation) external onlyAdmin {
     require(_newBeneficiary!=address(0), "Beneficiary cannot be 0 address");
 
     for (uint256 i = 0; i < beneficiaries.length; i++) {
@@ -368,7 +365,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @dev Can only be called by admin.
   @param _addressToAdd The address to grant the role.
    */
-  function addAddressToWhiteList(address _addressToAdd) external override onlyAdmin{
+  function addAddressToWhiteList(address _addressToAdd) external onlyAdmin{
     grantRole(WHITELISTED, _addressToAdd);
   }
 
@@ -378,7 +375,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @dev Can only be called by admin
   @param _addressToRemove The address to revoke the WHITELISTED role.
    */
-  function removeAddressFromWhiteList(address _addressToRemove) external override onlyAdmin {
+  function removeAddressFromWhiteList(address _addressToRemove) external onlyAdmin {
     revokeRole(WHITELISTED, _addressToRemove);
   }
     
@@ -391,7 +388,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @dev The fee token is approved for the uniswap router
   @param _tokenAddress The token address to register
    */
-  function registerTokenToDepositList(address _tokenAddress) external override onlyAdmin {
+  function registerTokenToDepositList(address _tokenAddress) external onlyAdmin {
     require(depositTokens.length() < MAX_NUM_FEE_TOKENS, "Too many tokens");
     require(_tokenAddress != address(0), "Token cannot be 0 address");
     require(_tokenAddress != weth, "WETH not supported"); // There is no WETH -> WETH pool in uniswap
@@ -406,7 +403,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @dev Resets uniswap approval to 0.
   @param _tokenAddress The fee token address to remove.
    */
-  function removeTokenFromDepositList(address _tokenAddress) external override onlyAdmin {
+  function removeTokenFromDepositList(address _tokenAddress) external onlyAdmin {
     ExchangeManager.removeApproveToken(_tokenAddress);
     depositTokens.remove(_tokenAddress);
   }
@@ -418,7 +415,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @param _toAddress The destination address.
   @param _amount The amount to transfer.
    */
-  function withdraw(address _token, address _toAddress, uint256 _amount) external override onlyAdmin {
+  function withdraw(address _token, address _toAddress, uint256 _amount) external onlyAdmin {
     IERC20Upgradeable(_token).safeTransfer(_toAddress, _amount);
   }
 
@@ -455,7 +452,7 @@ contract FeeCollector is IFeeCollector, Initializable, AccessControlUpgradeable 
   @dev The caller must be admin (see onlyAdmin modifier).
   @param _newAdmin The new admin address.
    */
-  function replaceAdmin(address _newAdmin) external override onlyAdmin {
+  function replaceAdmin(address _newAdmin) external onlyAdmin {
     grantRole(DEFAULT_ADMIN_ROLE, _newAdmin);
     revokeRole(DEFAULT_ADMIN_ROLE, msg.sender); // caller must be admin
   }

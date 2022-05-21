@@ -1,18 +1,18 @@
 const contract = require("@truffle/contract");
 const ITransparentUpgradeableProxy = require('@openzeppelin/contracts/build/contracts/TransparentUpgradeableProxy.json')
 
-const deployProxy = async(implementationFactory, initializationArgs, owner, sender) => {
+const deployProxy = async(implementationFactory, initializationArgs, proxyOwner, implementationOwner) => {
   const implementationLogic = await implementationFactory.new()
 
   const TransparentUpgradableProxyFactory = contract(ITransparentUpgradeableProxy)
   
   TransparentUpgradableProxyFactory.setProvider(config.provider)
 
-  const TransparentUpgradableProxy = await TransparentUpgradableProxyFactory.new(implementationLogic.address, owner, "0x", {from: owner})
+  const TransparentUpgradableProxy = await TransparentUpgradableProxyFactory.new(implementationLogic.address, proxyOwner, "0x", {from: proxyOwner})
 
   const implementationInstance = await implementationFactory.at(TransparentUpgradableProxy.address)
 
-  await implementationInstance.initialize(...initializationArgs, {from: sender})
+  await implementationInstance.initialize(...initializationArgs, {from: implementationOwner})
 
   return {
     implementationInstance,

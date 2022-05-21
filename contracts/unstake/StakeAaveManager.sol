@@ -5,19 +5,21 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
-import "./interfaces/IStakedAave.sol";
-import "./interfaces/IStakeManager.sol";
+import "../interfaces/IStakedAave.sol";
+import "../interfaces/IStakeManager.sol";
 
 contract StakeAaveManager is IStakeManager {
 
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
+  IERC20 private Aave;
   IStakedAave private StkAave;
-  IERC20 private constant Aave = IERC20(0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9);
 
-  constructor (address _stakeAave) {
+  constructor (address _aave, address _stakeAave) {
     StkAave = IStakedAave(_stakeAave);
+
+    Aave = IERC20(_aave);
   }
 
   function cooldown() external override {

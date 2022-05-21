@@ -2,7 +2,7 @@ const {constants} = require('@openzeppelin/test-helpers');
 const {
   abi: ISwapRouter,
 } = require("@uniswap/v3-periphery/artifacts/contracts/interfaces/ISwapRouter.sol/ISwapRouter.json");
-const ERC20 = require('../../abi/erc20')
+const ERC20  = require('@openzeppelin/contracts/build/contracts/ERC20.json')
 const addresses = require('../../migrations/addresses').development
 
 const swap = async (tokenIn, tokenOut, fee, toAddress, amountIn) => {

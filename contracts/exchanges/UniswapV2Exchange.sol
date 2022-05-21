@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-import './interfaces/IExchange.sol';
+import '../interfaces/IExchange.sol';
 
 contract UniswapV2Exchange is IExchange {
   using SafeMath for uint256;
@@ -43,21 +43,15 @@ contract UniswapV2Exchange is IExchange {
 
   function getAmoutOut(address tokenA, address tokenB, uint amountIn) external override returns (uint amountOut, bytes memory data) {
     (address token0,) = sortTokens(tokenA, tokenB);
-
     address pairAddress = factory.getPair(tokenA, tokenB);
-
     require(pairAddress != address(0));
 
     (uint reserve0, uint reserve1,) = IUniswapV2Pair(pairAddress).getReserves();
-
     (uint reserveA, uint reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
 
     uint amountInWithFee = amountIn.mul(997);
-
     uint numerator = amountInWithFee.mul(reserveB);
-
     uint denominator = reserveA.mul(1000).add(amountInWithFee);
-
     amountOut = numerator.div(denominator);
 
     data = abi.encode();

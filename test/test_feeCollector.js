@@ -1,7 +1,4 @@
 const {BN, constants, expectRevert} = require('@openzeppelin/test-helpers');
-const contractT = require("@truffle/contract");
-
-const { web3 } = require('@openzeppelin/test-helpers/src/setup');
 
 const { expect } = require('chai');
 
@@ -9,28 +6,27 @@ const FeeCollector = artifacts.require('FeeCollector')
 const IUniswapV2Router02 = artifacts.require('IUniswapV2Router02')
 const UniswapV2Exchange = artifacts.require('UniswapV2Exchange')
 const UniswapV3Exchange = artifacts.require('UniswapV3Exchange')
-
 const StakeAaveManager = artifacts.require('StakeAaveManager')
 
-const mockIDLE = artifacts.require('IDLEMock')
-const mockWETH = artifacts.require('WETHMock')
-const mockDAI = artifacts.require('DAIMock')
-const mockUSDC = artifacts.require('USDCMock')
-const ERC20abi = require("../abi/erc20")
-const IStakedAave = require('../abi/stakeAave')
+const mockERC20 = artifacts.require('ERC20Mock')
+
+const IStakedAave = artifacts.require('IStakedAave')
 
 const { increaseTo }= require('../utilities')
 const { swap: swapUniswapV2 }= require('../utilities/uniswapV2')
 const { addLiquidity: addLiquidityUniswapV3}= require('../utilities/uniswapV3')
 const {deployProxy} = require('../utilities/proxy')
 const addresses = require("../migrations/addresses").development
+const { abi: ERC20abi} = require('@openzeppelin/contracts/build/contracts/ERC20.json')
 
 const BNify = n => new BN(String(n))
 
 contract("FeeCollector", async accounts => {
   beforeEach(async function(){
-    const [owner] = accounts
-    this.owner = owner
+    const [feeCollectorOwner, proxyOwner, otherAddress] = accounts
+    this.feeCollectorOwner = feeCollectorOwner
+    this.proxyOwner = proxyOwner
+    this.otherAddress = otherAddress
 
     this.provider = web3.currentProvider.HttpProvider
 
@@ -38,91 +34,86 @@ contract("FeeCollector", async accounts => {
     this.nonZeroAddress = "0x0000000000000000000000000000000000000001"
     this.nonZeroAddress2 = "0x0000000000000000000000000000000000000002"
 
-    this.one = BNify('1000000000000000000') // 18 decimals
+    this.one = BNify('1000000000000000000')
     this.ratio_one_pecrent = BNify('1000')
 
-    this.mockWETH = await mockWETH.new()
-    this.mockDAI  = await mockDAI.new() // 600 dai == 1 WETH
-    this.mockIDLE  = await mockIDLE.new()
-    this.mockUSDC  = await mockUSDC.new()
+    this.mockWETH = await mockERC20.new('WETH', 'WETH', 18)
+    this.mockDAI  = await mockERC20.new('DAI', 'DAI', 18)
+    this.mockIDLE  = await mockERC20.new('IDLE', 'IDLE', 18)
+    this.mockUSDC  = await mockERC20.new('USDC', 'USDC', 6)
+
     this.aaveInstance = new web3.eth.Contract(ERC20abi, addresses.aave)
-    this.stakeAaveInstance = new web3.eth.Contract(IStakedAave, addresses.stakeAave)
+    this.stakeAaveInstance = await IStakedAave.at(addresses.stakeAave)
 
     await this.mockWETH.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
     await this.mockDAI.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
     await this.mockUSDC.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
-    await this.aaveInstance.methods.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256).send({from: this.owner})
+    await this.aaveInstance.methods.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256).send({from: this.feeCollectorOwner})
     
     this.uniswapRouterInstance = await IUniswapV2Router02.at(addresses.uniswapRouterAddress);
 
     // initialise the mockWETH/mockDAI uniswap pool
     await this.uniswapRouterInstance.addLiquidity(
       this.mockWETH.address, this.mockDAI.address,
-      web3.utils.toWei("1000"), web3.utils.toWei("600000"), // 600,000 DAI deposit into pool
+      web3.utils.toWei("1000"), web3.utils.toWei("5000"),
       0, 0,
-      this.owner,
+      this.feeCollectorOwner,
       BNify(web3.eth.getBlockNumber())
     )
 
-    // initialise the mockWETH/mockUSDC uniswap pool
-    await this.uniswapRouterInstance.addLiquidity(
-      this.mockWETH.address, this.mockUSDC.address,
-      web3.utils.toWei("500"), BNify("300000").mul(BNify('1000000')), // 300,000 USDC deposit into pool
-      0, 0,
-      this.owner,
-      BNify(web3.eth.getBlockNumber())
-    )
-
-    const exchangeManager = await UniswapV2Exchange.new()
-
-    this.stakeManager = await StakeAaveManager.new(addresses.stakeAave)
+    // // initialise the mockWETH/mockUSDC uniswap pool
+    // await this.uniswapRouterInstance.addLiquidity(
+    //   this.mockWETH.address, this.mockUSDC.address,
+    //   web3.utils.toWei("500"), BNify("300000").mul(BNify('1000000')),
+    //   0, 0,
+    //   this.owner,
+    //   BNify(web3.eth.getBlockNumber())
+    // )
+  
+    this.stakeManager = await StakeAaveManager.new(addresses.aave, addresses.stakeAave)
+    const exchangeManager = await UniswapV2Exchange.new(addresses.uniswapFactory, addresses.uniswapRouterAddress)
 
     const initializationArgs = [
       this.mockWETH.address,
       addresses.feeTreasuryAddress,
       addresses.idleRebalancer,
-      this.owner,
       [],
       exchangeManager.address,
       this.stakeManager.address
     ]
 
-    const {implementationInstance, TransparentUpgradableProxy} = await deployProxy(FeeCollector,initializationArgs, this.owner, accounts[1])
+    const {implementationInstance, TransparentUpgradableProxy} = await deployProxy(FeeCollector,initializationArgs, this.proxyOwner, this.feeCollectorOwner)
     this.TransparentUpgradableProxy = TransparentUpgradableProxy
     this.feeCollectorInstance = implementationInstance
   })
 
   it("Should replace proxy admin", async function () {
-    
-    const adminBefore = await this.TransparentUpgradableProxy.admin.call({from: this.owner})
-    await this.TransparentUpgradableProxy.changeAdmin(accounts[1], {from: this.owner})
-    const adminAfter = await this.TransparentUpgradableProxy.admin.call({from: accounts[1]})
+    const adminBefore = await this.TransparentUpgradableProxy.admin.call({from: this.proxyOwner})
+    await this.TransparentUpgradableProxy.changeAdmin(this.otherAddress, {from: this.proxyOwner})
+    const adminAfter = await this.TransparentUpgradableProxy.admin.call({from: this.otherAddress})
     expect(adminAfter).to.not.eq(adminBefore)
-})
+  })
     
-it("Should upgrade the contract implementation", async function () {
-    const implementationBefore = await this.TransparentUpgradableProxy.implementation.call({from: this.owner})
-    await this.TransparentUpgradableProxy.upgradeTo(this.feeCollectorInstance.address, {from: this.owner})
-    const implementationAfter = await this.TransparentUpgradableProxy.implementation.call({from: this.owner})
+  it("Should upgrade the contract implementation", async function () {
+    const implementationBefore = await this.TransparentUpgradableProxy.implementation.call({from: this.proxyOwner})
+    await this.TransparentUpgradableProxy.upgradeTo(this.feeCollectorInstance.address, {from: this.proxyOwner})
+    const implementationAfter = await this.TransparentUpgradableProxy.implementation.call({from: this.proxyOwner})
     expect(implementationAfter).to.not.eq(implementationBefore)
   })
 
   it("Should correctly deploy", async function() {
-    const [,otherAddress] = accounts
-    let instance = this.feeCollectorInstance
+    let allocation = await this.feeCollectorInstance.getSplitAllocation.call()
 
-    let allocation = await instance.getSplitAllocation.call()
+    let deployerAddressWhitelisted = await this.feeCollectorInstance.isAddressWhitelisted.call(this.feeCollectorOwner)
+    let randomAddressWhitelisted = await this.feeCollectorInstance.isAddressWhitelisted.call(this.otherAddress)
+    let deployerAddressAdmin = await this.feeCollectorInstance.isAddressAdmin.call(this.feeCollectorOwner)
+    let randomAddressAdmin = await this.feeCollectorInstance.isAddressAdmin.call(this.otherAddress)
 
-    let deployerAddressWhitelisted = await instance.isAddressWhitelisted.call(this.owner)
-    let randomAddressWhitelisted = await instance.isAddressWhitelisted.call(otherAddress)
-    let deployerAddressAdmin = await instance.isAddressAdmin.call(this.owner)
-    let randomAddressAdmin = await instance.isAddressAdmin.call(otherAddress)
+    let beneficiaries = await this.feeCollectorInstance.getBeneficiaries.call()
 
-    let beneficiaries = await instance.getBeneficiaries.call()
+    let depositTokens = await this.feeCollectorInstance.getDepositTokens.call()
 
-    let depositTokens = await instance.getDepositTokens.call()
-
-    expect(depositTokens.length).to.be.equal(0) // called with no tokens
+    expect(depositTokens.length).to.be.equal(0)
     
     expect(allocation.length).to.be.equal(2)
 
@@ -140,22 +131,20 @@ it("Should upgrade the contract implementation", async function () {
   })
 
   it("Should deposit tokens with split set to 50/50", async function() {
-    let instance = this.feeCollectorInstance
 
-    await instance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.owner
-    }) // set split 50/50
+    await this.feeCollectorInstance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))])
 
-    await instance.registerTokenToDepositList(this.mockDAI.address, {from: this.owner}) // whitelist dai
+    await this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address)
 
-    let depositTokens = await instance.getDepositTokens.call()
-    expect(depositTokens.length).to.be.equal(1) // called with no tokens
+    let depositTokens = await this.feeCollectorInstance.getDepositTokens.call()
+    expect(depositTokens.length).to.be.equal(1)
 
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
     let depositAmount = web3.utils.toWei("500")
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
-    await instance.deposit([true], [0], 0, {from: this.owner}) // call deposit1
+    await this.mockDAI.transfer(this.feeCollectorInstance.address, depositAmount)
+    await this.feeCollectorInstance.deposit([true], [0], 0) 
     
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -167,67 +156,66 @@ it("Should upgrade the contract implementation", async function () {
   })
 
   it("Should cloud stake and unstake aave token and deposit tokens with split set to 50/50", async function() {
-    const COOLDOWN_SECONDS = new BN(await this.stakeAaveInstance.methods.COOLDOWN_SECONDS().call())
+    const COOLDOWN_SECONDS = new BN(await this.stakeAaveInstance.COOLDOWN_SECONDS())
 
-    await swapUniswapV2(200, addresses.aave, addresses.weth, this.provider, this.owner)
+    await swapUniswapV2(200, addresses.aave, addresses.weth, this.provider, this.feeCollectorOwner)
     
-    // initialise the mockWETH/aave uniswap pool
     await this.uniswapRouterInstance.addLiquidity(
       this.mockWETH.address, addresses.aave,
       web3.utils.toWei("50"), web3.utils.toWei("150"),
       0, 0,
-      this.owner,
+      this.feeCollectorOwner,
       BNify(web3.eth.getBlockNumber())
     )
 
     let amountToStkAave = web3.utils.toWei('10')
 
-    await this.aaveInstance.methods.approve(addresses.stakeAave, constants.MAX_UINT256).send({from: this.owner})
+    await this.aaveInstance.methods.approve(addresses.stakeAave, constants.MAX_UINT256).send({from: this.feeCollectorOwner})
     
-    await this.stakeAaveInstance.methods.stake(this.owner, amountToStkAave).send({from: this.owner, gasLimit: 400000})
+    await this.stakeAaveInstance.stake(this.feeCollectorOwner, amountToStkAave, {from: this.feeCollectorOwner, gasLimit: 400000})
 
-    const stakeAaveBalance =  await this.stakeAaveInstance.methods.balanceOf(this.owner).call()
+    const stakeAaveBalance =  await this.stakeAaveInstance.balanceOf(this.feeCollectorOwner)
     
-    await this.stakeAaveInstance.methods.transfer(this.feeCollectorInstance.address, stakeAaveBalance).send({from: this.owner, gasLimit: 400000})
+    await this.stakeAaveInstance.transfer(this.feeCollectorInstance.address, stakeAaveBalance, {from: this.feeCollectorOwner, gasLimit: 400000})
 
     const tx = await this.feeCollectorInstance.startUnstakeCooldown(addresses.stakeAave)
   
-    let feeCollectorbalanceOfStkAave = await this.stakeAaveInstance.methods.balanceOf(this.feeCollectorInstance.address).call()
-    let stakeManagerbalanceOfStkAave = await this.stakeAaveInstance.methods.balanceOf(this.stakeManager.address).call()
+    let feeCollectorbalanceOfStkAave = await this.stakeAaveInstance.balanceOf(this.feeCollectorInstance.address)
+    let stakeManagerbalanceOfStkAave = await this.stakeAaveInstance.balanceOf(this.stakeManager.address)
     let { _amount } = tx?.logs[0]?.args
 
-    expect(feeCollectorbalanceOfStkAave).equal('0')
-    expect(stakeManagerbalanceOfStkAave).equal(_amount.toString())
+    expect(feeCollectorbalanceOfStkAave.toNumber()).equal(0)
+    expect(stakeManagerbalanceOfStkAave.eq(_amount)).to.be.true
     await expectRevert(this.feeCollectorInstance.startUnstakeCooldown(addresses.stakeAave), 'NO_BALANCE_IN_THIS_TOKEN')
 
     let feeCollectorBalanceOfAave =  await this.aaveInstance.methods.balanceOf(this.feeCollectorInstance.address).call()
     
     await this.feeCollectorInstance.claimStakeToken()
 
-    expect(feeCollectorBalanceOfAave).equal('0')
+    expect(+feeCollectorBalanceOfAave).equal(0)
 
-    const stakersCooldown =  new BN(await this.stakeAaveInstance.methods.stakersCooldowns(this.stakeManager.address).call())
+    const stakersCooldown =  new BN(await this.stakeAaveInstance.stakersCooldowns(this.stakeManager.address))
     
-    const consts = new BN(1000)
-    await increaseTo(stakersCooldown.add(COOLDOWN_SECONDS).add(consts))
+    const cooldownOffset = new BN(1000)
+    await increaseTo(stakersCooldown.add(COOLDOWN_SECONDS).add(cooldownOffset))
     
     await this.feeCollectorInstance.claimStakeToken()
 
-    stakeManagerbalanceOfStkAave = await this.stakeAaveInstance.methods.balanceOf(this.stakeManager.address).call()
+    stakeManagerbalanceOfStkAave = await this.stakeAaveInstance.balanceOf(this.stakeManager.address)
 
     feeCollectorBalanceOfAave =  await this.aaveInstance.methods.balanceOf(this.feeCollectorInstance.address).call()
 
-    expect(stakeManagerbalanceOfStkAave).equal('0')
-    expect(feeCollectorBalanceOfAave).equal(_amount.toString())
+    expect(stakeManagerbalanceOfStkAave.toNumber()).equal(0)
+    expect(BNify(feeCollectorBalanceOfAave).eq(_amount)).to.be.true
 
-    await this.feeCollectorInstance.setSplitAllocation([this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.owner}) 
+    await this.feeCollectorInstance.setSplitAllocation([this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.feeCollectorOwner}) 
 
     await this.feeCollectorInstance.registerTokenToDepositList(this.aaveInstance._address)
 
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
-    await this.feeCollectorInstance.deposit([true], [0], 0, {from: this.owner})
+    await this.feeCollectorInstance.deposit([true], [0], 0, {from: this.feeCollectorOwner})
 
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -241,25 +229,23 @@ it("Should upgrade the contract implementation", async function () {
 
   it("Should change the Exchange Manager and deposit tokens with split set to 50/50", async function () {
 
-    await addLiquidityUniswapV3(this.mockDAI.address, this.mockWETH.address, 500, this.owner, web3.utils.toWei('50'))
+    await addLiquidityUniswapV3(this.mockDAI.address, this.mockWETH.address, 500, this.feeCollectorOwner, web3.utils.toWei('50'))
     
-    let instance = this.feeCollectorInstance
+    await this.feeCollectorInstance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.feeCollectorOwner})
     
-    await instance.setSplitAllocation( [this.ratio_one_pecrent.mul(BNify('50')), this.ratio_one_pecrent.mul(BNify('50'))], {from: this.owner}) // set split 50/50
+    await this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address, {from: this.feeCollectorOwner}) 
     
-    await instance.registerTokenToDepositList(this.mockDAI.address, {from: this.owner}) // whitelist dai
+    const uniswapV3Exchange = await UniswapV3Exchange.new(addresses.swapRouter, addresses.quoter)
     
-    const uniswapV3Exchange = await UniswapV3Exchange.new()
-    
-    await instance.setExchangeManager(uniswapV3Exchange.address, {from: this.owner})
-    
+    await this.feeCollectorInstance.setExchangeManager(uniswapV3Exchange.address, {from: this.feeCollectorOwner})
+
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
     
     let depositAmount = web3.utils.toWei("30")
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner})
+    await this.mockDAI.transfer(this.feeCollectorInstance.address, depositAmount, {from: this.feeCollectorOwner})
     
-    await instance.deposit([true], [0], 0, {from: this.owner})
+    await this.feeCollectorInstance.deposit([true], [0], 0, {from: this.feeCollectorOwner})
     
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -271,79 +257,68 @@ it("Should upgrade the contract implementation", async function () {
   })
 
   it("Should deposit with max fee tokens and max beneficiaries", async function() {
-    let instance = this.feeCollectorInstance
-
     let initialAllocation = [BNify('90'), BNify('5')]
 
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index <= 2; index++) {
       initialAllocation[0] = BNify(90-5*index)
       initialAllocation.push(BNify('5'))
       
       let allocation = initialAllocation.map(x => this.ratio_one_pecrent.mul(x))
-      await instance.addBeneficiaryAddress(accounts[index], allocation)
+      await this.feeCollectorInstance.addBeneficiaryAddress(accounts[index], allocation)
     }
     let tokensEnables = [];
     let minTokenBalance = []
 
 
     for (let index = 0; index < 15; index++) {
-      let token = await mockDAI.new()
-      await instance.registerTokenToDepositList(token.address)
+      let token = await mockERC20.new('Token', 'TKN', 18)
+      await this.feeCollectorInstance.registerTokenToDepositList(token.address)
       await token.approve(addresses.uniswapRouterAddress, constants.MAX_UINT256)
 
       await this.uniswapRouterInstance.addLiquidity(
         this.mockWETH.address, token.address,
-        web3.utils.toWei("100"), web3.utils.toWei("60000"), // 600,000 DAI deposit into pool
+        web3.utils.toWei("100"), web3.utils.toWei("60000"),
         0, 0,
-        this.owner,
+        this.feeCollectorOwner,
         BNify(web3.eth.getBlockNumber())
       )
 
       let depositAmount = web3.utils.toWei("500")
-      await token.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
+      await token.transfer(this.feeCollectorInstance.address, depositAmount, {from: this.feeCollectorOwner})
       tokensEnables.push(true);
       minTokenBalance.push(1)
     }
-    let transaction = await instance.deposit(tokensEnables, minTokenBalance, 1)
 
-    console.log(`Gas used: ${transaction.receipt.gasUsed}`)
+    await this.feeCollectorInstance.deposit(tokensEnables, minTokenBalance, 1)
   })
 
   it('Should not be able to add duplicate beneficiaries', async function() {
-    const [,randomBeneficiary] = accounts
-    let instance = this.feeCollectorInstance
-
     let allocationA = [this.ratio_one_pecrent.mul(BNify('100')), BNify('0'), BNify('0')]
 
-    await instance.addBeneficiaryAddress(randomBeneficiary, allocationA)
+    await this.feeCollectorInstance.addBeneficiaryAddress(this.otherAddress, allocationA)
 
-    await expectRevert(instance.addBeneficiaryAddress(randomBeneficiary, allocationA), "Duplicate beneficiary")
+    await expectRevert(this.feeCollectorInstance.addBeneficiaryAddress(this.otherAddress, allocationA), "Duplicate beneficiary")
   })
 
   it("Should remove beneficiary", async function() {
-    let instance = this.feeCollectorInstance
-    const [,randomBeneficiary] = accounts
-
     let allocation = [this.ratio_one_pecrent.mul(BNify('100')), BNify('0'), BNify('0')]
 
-    await instance.addBeneficiaryAddress(randomBeneficiary, allocation)
+    await this.feeCollectorInstance.addBeneficiaryAddress(this.otherAddress, allocation)
 
-    let beneficiaries = await instance.getBeneficiaries.call()
+    let beneficiaries = await this.feeCollectorInstance.getBeneficiaries.call()
 
     expect(beneficiaries.length).to.be.equal(3)
 
     allocation.pop()
-    await instance.removeBeneficiaryAt(1, allocation)
+    await this.feeCollectorInstance.removeBeneficiaryAt(1, allocation)
 
-    beneficiaries = await instance.getBeneficiaries.call()
+    beneficiaries = await this.feeCollectorInstance.getBeneficiaries.call()
 
     expect(beneficiaries.length).to.be.equal(2)
-    expect(beneficiaries[1].toLowerCase()).to.be.equal(randomBeneficiary.toLowerCase())
+    expect(beneficiaries[1].toLowerCase()).to.be.equal(this.otherAddress.toLowerCase())
   })
 
   it("Should respect previous allocation when removing beneficiary", async function() {
-    let instance = this.feeCollectorInstance
-    const [,randomBeneficiary] = accounts
 
     let allocation = [
       this.ratio_one_pecrent.mul(BNify('50')),
@@ -351,10 +326,10 @@ it("Should upgrade the contract implementation", async function () {
       this.ratio_one_pecrent.mul(BNify('25')),
     ]
 
-    await instance.addBeneficiaryAddress(randomBeneficiary, allocation)
+    await this.feeCollectorInstance.addBeneficiaryAddress(this.otherAddress, allocation)
     
     let depositAmount = web3.utils.toWei("500")
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
+    await this.mockDAI.transfer(this.feeCollectorInstance.address, depositAmount, {from: this.feeCollectorOwner})
     
     let newAllocation = [
       this.ratio_one_pecrent.mul(BNify('50')),
@@ -362,13 +337,13 @@ it("Should upgrade the contract implementation", async function () {
       this.ratio_one_pecrent.mul(BNify('0'))
     ]
     
-    let beneficiaryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(randomBeneficiary))
+    let beneficiaryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(this.otherAddress))
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
     
-    await instance.setSplitAllocation(newAllocation)
+    await this.feeCollectorInstance.setSplitAllocation(newAllocation, {from: this.feeCollectorOwner})
 
-    let beneficiaryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(randomBeneficiary))
+    let beneficiaryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(this.otherAddress))
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
@@ -382,14 +357,12 @@ it("Should upgrade the contract implementation", async function () {
   })
 
   it("Should respect previous allocation when adding beneficiary", async function() {
-    let instance = this.feeCollectorInstance
-    const [,randomBeneficiary] = accounts
 
     let allocation = [
       this.ratio_one_pecrent.mul(BNify('50')),
       this.ratio_one_pecrent.mul(BNify('50')),
     ]
-    await instance.setSplitAllocation(allocation)
+    await this.feeCollectorInstance.setSplitAllocation(allocation)
 
     let newAllocation = [
       this.ratio_one_pecrent.mul(BNify('50')),
@@ -398,12 +371,12 @@ it("Should upgrade the contract implementation", async function () {
     ]
 
     let depositAmount = web3.utils.toWei("500")
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
+    await this.mockDAI.transfer(this.feeCollectorInstance.address, depositAmount, {from: this.feeCollectorOwner})
 
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceBefore =  BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
 
-    await instance.addBeneficiaryAddress(randomBeneficiary, newAllocation) // internally calls deposit
+    await this.feeCollectorInstance.addBeneficiaryAddress(this.otherAddress, newAllocation)
 
     let feeTreasuryWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))
     let idleRebalancerWethBalanceAfter = BNify(await this.mockWETH.balanceOf.call(addresses.idleRebalancer))
@@ -412,19 +385,15 @@ it("Should upgrade the contract implementation", async function () {
     let feeTreasuryWethBalanceDiff = feeTreasuryWethBalanceAfter.sub(feeTreasuryWethBalanceBefore)
 
     expect(feeTreasuryWethBalanceDiff).to.be.bignumber.equal(idleRebalancerWethBalanceDiff)
-    expect(BNify(await this.mockWETH.balanceOf.call(randomBeneficiary))).to.be.bignumber.that.is.equal(BNify("0"))
+    expect(BNify(await this.mockWETH.balanceOf.call(this.otherAddress))).to.be.bignumber.that.is.equal(BNify("0"))
   })
 
   it("Should revert when calling function with onlyWhitelisted modifier from non-whitelisted address", async function() {
-    let instance = this.feeCollectorInstance
-    const [,other] = accounts
 
-    await expectRevert(instance.deposit([], [], 0, {from: other}), "Unauthorised") // call deposit
+    await expectRevert(this.feeCollectorInstance.deposit([], [], 0, {from: this.otherAddress}), "Unauthorised") // call deposit
   })
 
   it("Should revert when calling function with onlyAdmin modifier when not admin", async function() {
-    let instance = this.feeCollectorInstance
-    const [,other] = accounts
 
     let allocation = [
       this.ratio_one_pecrent.mul(BNify('100')),
@@ -432,92 +401,86 @@ it("Should upgrade the contract implementation", async function () {
       this.ratio_one_pecrent.mul(BNify('0')),
     ]
     
-    await expectRevert(instance.addBeneficiaryAddress(this.nonZeroAddress, allocation, {from: other}), "Unauthorised")
-    await expectRevert(instance.removeBeneficiaryAt(1, allocation, {from: other}), "Unauthorised")
-    await expectRevert(instance.replaceBeneficiaryAt(1, this.nonZeroAddress, allocation, {from: other}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.addBeneficiaryAddress(this.nonZeroAddress, allocation, {from: this.otherAddress}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.removeBeneficiaryAt(1, allocation, {from: this.otherAddress}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.replaceBeneficiaryAt(1, this.nonZeroAddress, allocation, {from: this.otherAddress}), "Unauthorised")
 
-    await expectRevert(instance.addAddressToWhiteList(this.nonZeroAddress, {from: other}), "Unauthorised")
-    await expectRevert(instance.removeAddressFromWhiteList(this.nonZeroAddress, {from: other}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.addAddressToWhiteList(this.nonZeroAddress, {from: this.otherAddress}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.removeAddressFromWhiteList(this.nonZeroAddress, {from: this.otherAddress}), "Unauthorised")
     
-    await expectRevert(instance.registerTokenToDepositList(this.nonZeroAddress, {from: other}), "Unauthorised")
-    await expectRevert(instance.removeTokenFromDepositList(this.nonZeroAddress, {from: other}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.registerTokenToDepositList(this.nonZeroAddress, {from: this.otherAddress}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.removeTokenFromDepositList(this.nonZeroAddress, {from: this.otherAddress}), "Unauthorised")
     
-    await expectRevert(instance.setSplitAllocation(allocation, {from: other}), "Unauthorised")
-    await expectRevert(instance.replaceAdmin(this.nonZeroAddress, {from: other}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.setSplitAllocation(allocation, {from: this.otherAddress}), "Unauthorised")
+    await expectRevert(this.feeCollectorInstance.replaceAdmin(this.nonZeroAddress, {from: this.otherAddress}), "Unauthorised")
   })
 
   it("Should add & remove a token from the deposit list", async function() {
-    let instance = this.feeCollectorInstance
-    let mockDaiAddress = this.mockDAI.address
 
-    let isDaiInDepositListFromBootstrap = await instance.isTokenInDespositList.call(mockDaiAddress)
+    let isDaiInDepositListFromBootstrap = await this.feeCollectorInstance.isTokenInDespositList.call(this.mockDAI.address)
     assert.isFalse(isDaiInDepositListFromBootstrap)
 
-    await instance.registerTokenToDepositList(mockDaiAddress, {from: this.owner})
+    await this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address, {from: this.feeCollectorOwner})
     
-    let daiInDepositList = await instance.isTokenInDespositList.call(mockDaiAddress)
+    let daiInDepositList = await this.feeCollectorInstance.isTokenInDespositList.call(this.mockDAI.address)
     assert.isTrue(daiInDepositList)
 
-    await instance.removeTokenFromDepositList(mockDaiAddress, {from: this.owner})
-    let daiNoLongerInDepositList = await instance.isTokenInDespositList.call(mockDaiAddress)
+    await this.feeCollectorInstance.removeTokenFromDepositList(this.mockDAI.address, {from: this.feeCollectorOwner})
+    let daiNoLongerInDepositList = await this.feeCollectorInstance.isTokenInDespositList.call(this.mockDAI.address)
     assert.isFalse(daiNoLongerInDepositList)
   })
 
   it("Should set beneficiary address", async function() {
-    let instance = this.feeCollectorInstance
 
     let allocation = [
       this.ratio_one_pecrent.mul(BNify('100')),
       this.ratio_one_pecrent.mul(BNify('0')),
     ]
 
-    let initialFeeTreasuryAddress = await instance.getBeneficiaries.call()
+    let initialFeeTreasuryAddress = await this.feeCollectorInstance.getBeneficiaries.call()
     expect(initialFeeTreasuryAddress[0].toLowerCase()).to.be.equal(addresses.feeTreasuryAddress.toLowerCase())
 
-    await expectRevert(instance.replaceBeneficiaryAt(0, this.zeroAddress, allocation), "Beneficiary cannot be 0 address")
+    await expectRevert(this.feeCollectorInstance.replaceBeneficiaryAt(0, this.zeroAddress, allocation), "Beneficiary cannot be 0 address")
 
-    await instance.replaceBeneficiaryAt(0, this.nonZeroAddress, allocation)
+    await this.feeCollectorInstance.replaceBeneficiaryAt(0, this.nonZeroAddress, allocation)
 
-    let newFeeTreasuryAddress = await instance.getBeneficiaries.call()
+    let newFeeTreasuryAddress = await this.feeCollectorInstance.getBeneficiaries.call()
     expect(newFeeTreasuryAddress[0].toLowerCase()).to.be.equal(this.nonZeroAddress)
   })
 
   it("Should add & remove whitelist address", async function() {
-    let instance = this.feeCollectorInstance
 
-    let before = await instance.isAddressWhitelisted(this.nonZeroAddress)
+    let before = await this.feeCollectorInstance.isAddressWhitelisted(this.nonZeroAddress)
     expect(before, "Address should not be whitelisted initially").to.be.false
 
-    await instance.addAddressToWhiteList(this.nonZeroAddress, {from: this.owner})
-    let after = await instance.isAddressWhitelisted(this.nonZeroAddress)
+    await this.feeCollectorInstance.addAddressToWhiteList(this.nonZeroAddress, {from: this.feeCollectorOwner})
+    let after = await this.feeCollectorInstance.isAddressWhitelisted(this.nonZeroAddress)
     expect(after, "Address should now be whitelisted").to.be.true
 
-    await instance.removeAddressFromWhiteList(this.nonZeroAddress, {from: this.owner})
-    let final = await instance.isAddressWhitelisted(this.nonZeroAddress)
+    await this.feeCollectorInstance.removeAddressFromWhiteList(this.nonZeroAddress, {from: this.feeCollectorOwner})
+    let final = await this.feeCollectorInstance.isAddressWhitelisted(this.nonZeroAddress)
     expect(final, "Address should not be whitelisted").to.be.false
   })
 
   it("Should withdraw arbitrary token", async function() {
-    let instance = this.feeCollectorInstance
 
     let depositAmount = web3.utils.toWei("500")
 
-    await this.mockDAI.transfer(instance.address, depositAmount, {from: this.owner}) // 500 DAI
+    await this.mockDAI.transfer(this.feeCollectorInstance.address, depositAmount, {from: this.feeCollectorOwner})
 
-    await instance.withdraw(this.mockDAI.address, this.nonZeroAddress, depositAmount)
+    await this.feeCollectorInstance.withdraw(this.mockDAI.address, this.nonZeroAddress, depositAmount)
     let daiBalance = await this.mockDAI.balanceOf.call(this.nonZeroAddress)
 
     expect(daiBalance).to.be.bignumber.equal(depositAmount)
   })
 
   it("Should replace admin", async function() {
-    let instance = this.feeCollectorInstance
 
-    let nonZeroAddressIsAdmin = await instance.isAddressAdmin.call(this.nonZeroAddress)
-    await instance.replaceAdmin(this.nonZeroAddress, {from: this.owner})
+    let nonZeroAddressIsAdmin = await this.feeCollectorInstance.isAddressAdmin.call(this.nonZeroAddress)
+    await this.feeCollectorInstance.replaceAdmin(this.nonZeroAddress, {from: this.feeCollectorOwner})
 
-    let nonZeroAddressIsAdminAfter = await instance.isAddressAdmin.call(this.nonZeroAddress)
-    let previousAdminRevoked = await instance.isAddressAdmin.call(this.owner)
+    let nonZeroAddressIsAdminAfter = await this.feeCollectorInstance.isAddressAdmin.call(this.nonZeroAddress)
+    let previousAdminRevoked = await this.feeCollectorInstance.isAddressAdmin.call(this.feeCollectorOwner)
 
     expect(nonZeroAddressIsAdmin, "Address should not start off as admin").to.be.false
     expect(nonZeroAddressIsAdminAfter, "Address should be granted admin").to.be.true
@@ -525,38 +488,34 @@ it("Should upgrade the contract implementation", async function () {
   })
 
   it("Should not be able to add duplicate deposit token", async function() {
-    let instance = this.feeCollectorInstance
 
-    await instance.registerTokenToDepositList(this.mockDAI.address)
-    await expectRevert(instance.registerTokenToDepositList(this.mockDAI.address), "Already exists")
+    await this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address)
+    await expectRevert(this.feeCollectorInstance.registerTokenToDepositList(this.mockDAI.address), "Already exists")
 
-    let totalDepositTokens = await instance.getNumTokensInDepositList.call()
+    let totalDepositTokens = await this.feeCollectorInstance.getNumTokensInDepositList.call()
     expect(totalDepositTokens).to.be.bignumber.equal(BNify('1'))
   })
 
   it("Should not add WETH as deposit token", async function() {
-    let instance = this.feeCollectorInstance
 
-    await expectRevert(instance.registerTokenToDepositList(this.mockWETH.address), "WETH not supported")
+    await expectRevert(this.feeCollectorInstance.registerTokenToDepositList(this.mockWETH.address), "WETH not supported")
   })
 
   it("Should not be able to add deposit tokens past limit", async function() {
-    let instance = this.feeCollectorInstance
     let token
     for (let index = 0; index < 15; index++) {
-      token = await mockDAI.new()
-      await instance.registerTokenToDepositList(token.address)
+      token = await mockERC20.new('Token', 'TKN', 18)
+      await this.feeCollectorInstance.registerTokenToDepositList(token.address)
     }
 
-    token = await mockDAI.new()
-    await expectRevert(instance.registerTokenToDepositList(token.address), "Too many tokens")
+    token = await mockERC20.new('Token', 'TKN', 18)
+    await expectRevert(this.feeCollectorInstance.registerTokenToDepositList(token.address), "Too many tokens")
   })
 
   it("Should not set invalid split ratio", async function() {
-    let instance = this.feeCollectorInstance
     
     let allocation = [this.ratio_one_pecrent.mul(BNify('100')), BNify('5'),]
     
-    await expectRevert(instance.setSplitAllocation(allocation), "Ratio does not equal 100000")
+    await expectRevert(this.feeCollectorInstance.setSplitAllocation(allocation), "Ratio does not equal 100000")
   })
 })
