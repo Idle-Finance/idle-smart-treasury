@@ -76,6 +76,9 @@ contract("FeeCollector", async accounts => {
     const {implementationInstance, TransparentUpgradableProxy} = await deployProxy(FeeCollector,initializationArgs, this.proxyOwner, this.feeCollectorOwner)
     this.TransparentUpgradableProxy = TransparentUpgradableProxy
     this.feeCollectorInstance = implementationInstance
+
+    await this.stakeManager.transferOwnership(this.feeCollectorInstance.address, {from: this.feeCollectorOwner})
+    await exchangeManager.transferOwnership(this.feeCollectorInstance.address, {from: this.feeCollectorOwner})
   })
 
   it("Should replace proxy admin", async function () {
@@ -222,6 +225,8 @@ contract("FeeCollector", async accounts => {
     
     const uniswapV3Exchange = await UniswapV3Exchange.new(addresses.swapRouter, addresses.quoter, addresses.uniswapV3FactoryAddress)
     
+    await uniswapV3Exchange.transferOwnership(this.feeCollectorInstance.address, {from: this.feeCollectorOwner})
+
     await this.feeCollectorInstance.addExchangeManager(uniswapV3Exchange.address, {from: this.feeCollectorOwner})
 
     let feeTreasuryWethBalanceBefore = BNify(await this.mockWETH.balanceOf.call(addresses.feeTreasuryAddress))

@@ -4,11 +4,13 @@ pragma experimental ABIEncoderV2;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
 
 import "../interfaces/IStakedAave.sol";
 import "../interfaces/IStakeManager.sol";
 
-contract StakeAaveManager is IStakeManager {
+contract StakeAaveManager is IStakeManager , Ownable {
 
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
@@ -22,11 +24,11 @@ contract StakeAaveManager is IStakeManager {
     Aave = IERC20(_aave);
   }
 
-  function COOLDOWN_SECONDS() external override returns (uint256) {
+  function COOLDOWN_SECONDS() external override onlyOwner returns (uint256) {
     return StkAave.COOLDOWN_SECONDS();
   }
 
-  function claimStaked () external override {
+  function claimStaked () external override onlyOwner {
     _claimStkAave();
   }
 

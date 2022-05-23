@@ -5,13 +5,14 @@ pragma abicoder v2;
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/IQuoter.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
 import "../interfaces/IExchange.sol";
 
-contract UniswapV3Exchange is IExchange {
+contract UniswapV3Exchange is IExchange, Ownable {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
@@ -34,7 +35,7 @@ contract UniswapV3Exchange is IExchange {
 
   }
 
-  function exchange(address token, uint amountOut, address to, address[] calldata path, bytes memory data) external override {
+  function exchange(address token, uint amountOut, address to, address[] calldata path, bytes memory data) external override onlyOwner {
 
     uint256 _amountIn = IERC20(token).balanceOf(address(this));
 
@@ -59,7 +60,7 @@ contract UniswapV3Exchange is IExchange {
     uniswapRouterV3.exactInputSingle(params);
   }
 
-  function getAmoutOut(address tokenA, address tokenB, uint amountIn) external override returns (uint amountOut, bytes memory data) {
+  function getAmoutOut(address tokenA, address tokenB, uint amountIn) external override onlyOwner returns (uint amountOut, bytes memory data) {
     uint256 _currentAmountOut;
     uint256 _MaxAmountOut = 0;
     uint24 _fee;
@@ -80,11 +81,11 @@ contract UniswapV3Exchange is IExchange {
     data = abi.encode(_fee);
   }
 
-  function approveToken(address _depositToken, uint256 amount) external override {
+  function approveToken(address _depositToken, uint256 amount) external override  onlyOwner {
     IERC20(_depositToken).safeIncreaseAllowance(address(uniswapRouterV3), amount);
   }
 
-  function removeApproveToken(address _token) external override {
+  function removeApproveToken(address _token) external override onlyOwner {
     IERC20(_token).safeApprove(address(uniswapRouterV3), 0);
   }
 }

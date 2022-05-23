@@ -13,6 +13,7 @@ import "./interfaces/IExchange.sol";
 import "./interfaces/IStakeManager.sol";
 
 contract FeeCollector is Initializable, AccessControlUpgradeable {
+
   using EnumerableSetUpgradeable for EnumerableSetUpgradeable.AddressSet;
   using SafeMathUpgradeable for uint256;
   using SafeERC20Upgradeable for IERC20Upgradeable;
@@ -38,20 +39,8 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
 
   event DepositTokens(address _depositor, uint256 _amountOut);
 
-  /*
-  @author Asaf Silman
-  @notice Initialise the FeeCollector contract.
-  @dev Sets the smartTreasury, weth address, uniswap router, and fee split allocations.
-  @dev Also initialises the sender as admin, and whitelists for calling `deposit()`
-  @dev At deploy time the smart treasury will not have been deployed yet.
-       setSmartTreasuryAddress should be called after the treasury has been deployed.
-  @param _weth The wrapped ethereum address.
-  @param _feeTreasuryAddress The address of idle's fee treasury.
-  @param _idleRebalancer Idle rebalancer address
-  @param _multisig The multisig account to transfer ownership to after contract initialised
-  @param _initialDepositTokens The initial tokens to register with the fee deposit
-  @param _router the router
-  */
+	// initializes exchange and skake managers
+	// total beneficiaries' allocation should be 100%
   function initialize(
     address _weth,
     address[] memory _beneficiaries,
@@ -78,7 +67,183 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
 
   }
 
-  function _setStakeManagers(address[] memory _stakeManagers) internal {
+  // converts all registered fee tokens to WETH and deposits to
+  // beneficiaries' based on split allocations
+  function deposit(
+    bool[] memory _depositTokensEnabled,
+    uint256[] memory _minTokenOut
+  ) public onlyWhitelisted {
+    _deposit(_depositTokensEnabled, _minTokenOut);
+  }
+  
+	// cannot set an existing exchange manager
+	// also approve the exchange manager to use all deposit tokens
+  function addExchangeManager(address exchangeAddress) external onlyAdmin {
+    
+    require(exchangeManagerExists[exchangeAddress] == false, "Duplicate exchange manager");
+    require(exchangeAddress != address(0), "Exchange Manager cannot be 0 address");
+    
+    IExchange exchange = IExchange(exchangeAddress);
+    ExchangeManagers.push(exchange);
+    exchangeManagerExists[exchangeAddress] = true;
+
+    address _tokenAddress;
+    for (uint256 index = 0; index < depositTokens.length(); index++) {
+      _tokenAddress = depositTokens.at(index);
+      exchange.approveToken(_tokenAddress, type(uint256).max);
+    }
+  }
+
+	// replaces the last exchange manager with the one on the given index
+	// also removes exchange manager approval of deposit tokens
+  function removeExchangeManager(uint256 _index) external onlyAdmin {
+
+    IExchange exchange = ExchangeManagers[_index];
+    exchangeManagerExists[address(exchange)] = false;
+
+    ExchangeManagers[_index] = ExchangeManagers[ExchangeManagers.length-1];
+    ExchangeManagers.pop();
+
+    address _tokenAddress;
+    for (uint256 index = 0; index < depositTokens.length(); index++) {
+      _tokenAddress = depositTokens.at(index);
+      exchange.removeApproveToken(_tokenAddress);
+    }
+  }
+
+	// cannot set an existing stake manager
+  function addStakeManager(address stakeAddress) external onlyAdmin {
+    require(stakeManagerExists[stakeAddress] == false, "Duplicate stake manager");
+    require(stakeAddress != address(0), "Steke Manager cannot be 0 address");
+    
+    IStakeManager stake = IStakeManager(stakeAddress);
+    StakeManagers.push(stake);
+    stakeManagerExists[stakeAddress] = true;
+  }
+
+	// replaces the last stake manager with the one on the given index
+  function removeStakeManager(uint256 _index) external onlyAdmin {
+    IStakeManager stake = StakeManagers[_index];
+    stakeManagerExists[address(stake)] = false;
+
+    StakeManagers[_index] = StakeManagers[StakeManagers.length-1];
+    StakeManagers.pop();
+  }
+
+	// find the respective stake manager for each unstake token
+	// and unstakes / starts cooldown for that token
+  function claimStakedToken(address[] memory _unstakeTokens) external onlyAdmin {
+
+    IERC20Upgradeable unstakeToken;
+    uint256 currentBalance;
+
+    for (uint256 i=0; i < StakeManagers.length; i++) {
+      for (uint256 y=0; y < _unstakeTokens.length; y++) {
+        if (StakeManagers[i].stakedToken() == _unstakeTokens[y]) {
+          unstakeToken = IERC20Upgradeable(_unstakeTokens[y]);
+          currentBalance = unstakeToken.balanceOf(address(this));
+
+          if (currentBalance > 0) {
+            unstakeToken.safeTransfer(address(StakeManagers[0]), currentBalance);
+          }
+          StakeManagers[0].claimStaked();
+          break;
+        }
+      }
+    }
+
+  }
+
+	// before the split allocation is updated internally a call to `deposit()` is made
+  // such that all fee accrued using the previous allocations.
+  // the split allocations must sum to 100000.
+  function setSplitAllocation(uint256[] calldata _allocations) external onlyAdmin {
+    _depositAllTokens();
+
+    _setSplitAllocation(_allocations);
+  }
+
+  // the new allocations must include the new beneficiary
+  // there's also a maximum of 5 beneficiaries
+  function addBeneficiaryAddress(address _newBeneficiary, uint256[] calldata _newAllocation) external onlyAdmin {
+    require(beneficiaries.length < MAX_BENEFICIARIES, "Max beneficiaries");
+    require(_newBeneficiary!=address(0), "beneficiary cannot be 0 address");
+
+    require(beneficiariesExists[_newBeneficiary] == false, "Duplicate beneficiary");
+    beneficiariesExists[_newBeneficiary] = true;
+
+    _depositAllTokens();
+
+    beneficiaries.push(_newBeneficiary);
+
+    _setSplitAllocation(_newAllocation);
+  }
+
+  // the beneficiary at the last index, will be replaced with the beneficiary at a given index
+  function removeBeneficiaryAt(uint256 _index, uint256[] calldata _newAllocation) external onlyAdmin {
+    require(_index < beneficiaries.length, "Out of range");
+    require(beneficiaries.length > MIN_BENEFICIARIES, "Min beneficiaries");
+    
+    _depositAllTokens();
+
+    beneficiaries[_index] = beneficiaries[beneficiaries.length-1];
+    beneficiaries.pop();
+
+    beneficiariesExists[beneficiaries[_index]] = false;
+    
+    _setSplitAllocation(_newAllocation);
+  }
+
+	// this is used for calling deposit at the momemnt
+  function addAddressToWhiteList(address _addressToAdd) external onlyAdmin{
+    grantRole(WHITELISTED, _addressToAdd);
+  }
+
+  function removeAddressFromWhiteList(address _addressToRemove) external onlyAdmin {
+    revokeRole(WHITELISTED, _addressToRemove);
+  }
+  
+  // respects the of 15 fee tokens than can be registered
+  // WETH cannot be accepted as a fee token
+  // the fee token is approved for the uniswap router
+  function registerTokenToDepositList(address _tokenAddress) external onlyAdmin {
+    require(depositTokens.length() < MAX_NUM_FEE_TOKENS, "Too many tokens");
+    require(_tokenAddress != address(0), "Token cannot be 0 address");
+    require(_tokenAddress != address(Weth), "WETH not supported"); // as there is no WETH to WETH pool in some exchanges
+    require(depositTokensExists[_tokenAddress] == false, "Duplicate deposit token");
+    depositTokensExists[_tokenAddress] = true;
+    for (uint256 index = 0; index < ExchangeManagers.length; index++) {
+      ExchangeManagers[index].approveToken(_tokenAddress, type(uint256).max);
+    }
+    depositTokens.add(_tokenAddress);
+  }
+
+  // also resets uniswap approval
+  function removeTokenFromDepositList(address _tokenAddress) external onlyAdmin {
+    for (uint256 index = 0; index < ExchangeManagers.length; index++) {
+      ExchangeManagers[index].removeApproveToken(_tokenAddress);
+    }
+    depositTokens.remove(_tokenAddress);
+    depositTokensExists[_tokenAddress] = false;
+  }
+
+	// moves a specific token to a given address for a given amount
+  function withdraw(address _token, address _toAddress, uint256 _amount) external onlyAdmin {
+    IERC20Upgradeable(_token).safeTransfer(_toAddress, _amount);
+  }
+
+	// there can only be one admin
+	// this is different from the proxy admin of the contract
+  function replaceAdmin(address _newAdmin) external onlyAdmin {
+    grantRole(DEFAULT_ADMIN_ROLE, _newAdmin);
+    revokeRole(DEFAULT_ADMIN_ROLE, msg.sender); 
+  }
+
+	/***********************/
+	/*****  INTERNAL   *****/
+	/***********************/
+
+	function _setStakeManagers(address[] memory _stakeManagers) internal {
     for (uint256 index = 0; index < _stakeManagers.length; index++) {
       require(stakeManagerExists[_stakeManagers[index]] == false, "Duplicate stake manager");
       require(_stakeManagers[index] != address(0), "Stake Manager cannot be 0 address");
@@ -129,20 +294,7 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
     }
   }
 
-  /*
-  @author Asaf Silman
-  @notice Converts all registered fee tokens to WETH and deposits to
-          fee treasury and smart treasury based on split allocations.
-  @dev The fees are swaped using Uniswap simple route. E.g. Token -> WETH.
-   */
-  function deposit(
-    bool[] memory _depositTokensEnabled,
-    uint256[] memory _minTokenOut
-  ) public onlyWhitelisted {
-    _deposit(_depositTokensEnabled, _minTokenOut);
-  }
-
-  function _deposit(
+	function _deposit(
     bool[] memory _depositTokensEnabled,
     uint256[] memory _minTokenOut
   ) internal {
@@ -206,99 +358,7 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
     }
     emit DepositTokens(msg.sender, wethBalance);
   }
-  
-  function addExchangeManager(address exchangeAddress) external onlyAdmin {
-    
-    require(exchangeManagerExists[exchangeAddress] == false, "Duplicate exchange manager");
-    require(exchangeAddress != address(0), "Exchange Manager cannot be 0 address");
-    
-    IExchange exchange = IExchange(exchangeAddress);
-    ExchangeManagers.push(exchange);
-    exchangeManagerExists[exchangeAddress] = true;
 
-    address _tokenAddress;
-    for (uint256 index = 0; index < depositTokens.length(); index++) {
-      _tokenAddress = depositTokens.at(index);
-      exchange.approveToken(_tokenAddress, type(uint256).max);
-    }
-  }
-
-  function removeExchangeManager(uint256 _index) external onlyAdmin {
-
-    IExchange exchange = ExchangeManagers[_index];
-    exchangeManagerExists[address(exchange)] = false;
-
-    ExchangeManagers[_index] = ExchangeManagers[ExchangeManagers.length-1];
-    ExchangeManagers.pop();
-
-    address _tokenAddress;
-    for (uint256 index = 0; index < depositTokens.length(); index++) {
-      _tokenAddress = depositTokens.at(index);
-      exchange.removeApproveToken(_tokenAddress);
-    }
-  }
-
-  function addStakeManager(address stakeAddress) external onlyAdmin {
-    require(stakeManagerExists[stakeAddress] == false, "Duplicate stake manager");
-    require(stakeAddress != address(0), "Steke Manager cannot be 0 address");
-    
-    IStakeManager stake = IStakeManager(stakeAddress);
-    StakeManagers.push(stake);
-    stakeManagerExists[stakeAddress] = true;
-  }
-
-  function removeStakeManager(uint256 _index) external onlyAdmin {
-    IStakeManager stake = StakeManagers[_index];
-    stakeManagerExists[address(stake)] = false;
-
-    StakeManagers[_index] = StakeManagers[StakeManagers.length-1];
-    StakeManagers.pop();
-  }
-
-  function claimStakedToken(address[] memory _unstakeTokens) external onlyAdmin {
-
-    IERC20Upgradeable unstakeToken;
-    uint256 currentBalance;
-
-    for (uint256 i=0; i < StakeManagers.length; i++) {
-      for (uint256 y=0; y < _unstakeTokens.length; y++) {
-        if (StakeManagers[i].stakedToken() == _unstakeTokens[y]) {
-          unstakeToken = IERC20Upgradeable(_unstakeTokens[y]);
-          currentBalance = unstakeToken.balanceOf(address(this));
-
-          if (currentBalance > 0) {
-            unstakeToken.safeTransfer(address(StakeManagers[0]), currentBalance);
-          }
-          StakeManagers[0].claimStaked();
-          break;
-        }
-      }
-    }
-
-  }
-
-  /*
-  @author Asaf Silman
-  @notice Sets the split allocations of fees to send to fee beneficiaries
-  @dev The split allocations must sum to 100000.
-  @dev Before the split allocation is updated internally a call to `deposit()` is made
-       such that all fee accrued using the previous allocations.
-  @dev smartTreasury must be set for this to be called.
-  @param _allocations The updated split ratio.
-   */
-  function setSplitAllocation(uint256[] calldata _allocations) external onlyAdmin {
-    _depositAllTokens();
-
-    _setSplitAllocation(_allocations);
-  }
-
-  /*
-  @author Asaf Silman
-  @notice Internal function to sets the split allocations of fees to send to fee beneficiaries
-  @dev The split allocations must sum to 100000.
-  @dev smartTreasury must be set for this to be called.
-  @param _allocations The updated split ratio.
-   */
   function _setSplitAllocation(uint256[] memory _allocations) internal {
     require(_allocations.length == beneficiaries.length, "Invalid length");
     
@@ -311,11 +371,7 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
 
     allocations = _allocations;
   }
-
-  /*
-  @author Andrea @ idle.finance
-  @notice Helper function to deposit all tokens
-   */
+	
   function _depositAllTokens() internal {
     uint256 numTokens = depositTokens.length();
     bool[] memory depositTokensEnabled = new bool[](numTokens);
@@ -329,140 +385,6 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
     _deposit(depositTokensEnabled, minTokenOut);
   }
 
-  /*
-  @author Asaf Silman
-  @notice Adds an address as a beneficiary to the idle fees
-  @dev The new beneficiary will be pushed to the end of the beneficiaries array.
-  The new allocations must include the new beneficiary
-  @dev There is a maximum of 5 beneficiaries which can be registered with the fee collector
-  @param _newBeneficiary The new beneficiary to add
-  @param _newAllocation The new allocation of fees including the new beneficiary
-   */
-  function addBeneficiaryAddress(address _newBeneficiary, uint256[] calldata _newAllocation) external onlyAdmin {
-    require(beneficiaries.length < MAX_BENEFICIARIES, "Max beneficiaries");
-    require(_newBeneficiary!=address(0), "beneficiary cannot be 0 address");
-
-    require(beneficiariesExists[_newBeneficiary] == false, "Duplicate beneficiary");
-    beneficiariesExists[_newBeneficiary] = true;
-
-    _depositAllTokens();
-
-    beneficiaries.push(_newBeneficiary);
-
-    _setSplitAllocation(_newAllocation);
-  }
-
-  /*
-  @author Asaf Silman
-  @notice removes a beneficiary at a given index.
-  @notice WARNING: when using this method be very careful to note the new allocations
-  The beneficiary at the LAST index, will be replaced with the beneficiary at `_index`.
-  The new allocations need to reflect this updated array.
-
-  eg.
-  if beneficiaries = [a, b, c, d]
-  and removeBeneficiaryAt(1, [...]) is called
-
-  the final beneficiaries array will be
-  [a, d, c]
-  `_newAllocations` should be based off of this final array.
-
-  @dev Cannot remove beneficiary past MIN_BENEFICIARIES. set to 2
-  @dev Cannot replace the smart treasury beneficiary at index 0
-  @param _index The index of the beneficiary to remove
-  @param _newAllocation The new allocation of fees removing the beneficiary. NOTE !! The order of beneficiaries will change !!
-   */
-  function removeBeneficiaryAt(uint256 _index, uint256[] calldata _newAllocation) external onlyAdmin {
-    require(_index < beneficiaries.length, "Out of range");
-    require(beneficiaries.length > MIN_BENEFICIARIES, "Min beneficiaries");
-    
-    _depositAllTokens();
-
-    // replace beneficiary with index with final beneficiary, and call pop
-    beneficiaries[_index] = beneficiaries[beneficiaries.length-1];
-    beneficiaries.pop();
-
-    beneficiariesExists[beneficiaries[_index]] = false;
-    
-    // NOTE THE ORDER OF ALLOCATIONS
-    _setSplitAllocation(_newAllocation);
-  }
-
-  /*
-  @author Asaf Silman
-  @notice Gives an address the WHITELISTED role. Used for calling `deposit()`.
-  @dev Can only be called by admin.
-  @param _addressToAdd The address to grant the role.
-   */
-  function addAddressToWhiteList(address _addressToAdd) external onlyAdmin{
-    grantRole(WHITELISTED, _addressToAdd);
-  }
-
-  /*
-  @author Asaf Silman
-  @notice Removed an address from whitelist.
-  @dev Can only be called by admin
-  @param _addressToRemove The address to revoke the WHITELISTED role.
-   */
-  function removeAddressFromWhiteList(address _addressToRemove) external onlyAdmin {
-    revokeRole(WHITELISTED, _addressToRemove);
-  }
-    
-  /*
-  @author Asaf Silman
-  @notice Registers a fee token to the fee collecter
-  @dev There is a maximum of 15 fee tokens than can be registered.
-  @dev WETH cannot be accepted as a fee token.
-  @dev The token must be a complient ERC20 token.
-  @dev The fee token is approved for the uniswap router
-  @param _tokenAddress The token address to register
-   */
-  function registerTokenToDepositList(address _tokenAddress) external onlyAdmin {
-    require(depositTokens.length() < MAX_NUM_FEE_TOKENS, "Too many tokens");
-    require(_tokenAddress != address(0), "Token cannot be 0 address");
-    require(_tokenAddress != address(Weth), "WETH not supported"); // There is no WETH -> WETH pool in uniswap
-    require(depositTokensExists[_tokenAddress] == false, "Duplicate deposit token");
-    depositTokensExists[_tokenAddress] = true;
-    for (uint256 index = 0; index < ExchangeManagers.length; index++) {
-      ExchangeManagers[index].approveToken(_tokenAddress, type(uint256).max);
-    }
-    depositTokens.add(_tokenAddress);
-  }
-
-  /*
-  @author Asaf Silman
-  @notice Removed a fee token from the fee collector.
-  @dev Resets uniswap approval to 0.
-  @param _tokenAddress The fee token address to remove.
-   */
-  function removeTokenFromDepositList(address _tokenAddress) external onlyAdmin {
-    for (uint256 index = 0; index < ExchangeManagers.length; index++) {
-      ExchangeManagers[index].removeApproveToken(_tokenAddress);
-    }
-    depositTokens.remove(_tokenAddress);
-    depositTokensExists[_tokenAddress] = false;
-  }
-
-  /*
-  @author Asaf Silman
-  @notice Withdraws a arbitrarty ERC20 token from feeCollector to an arbitrary address.
-  @param _token The ERC20 token address.
-  @param _toAddress The destination address.
-  @param _amount The amount to transfer.
-   */
-  function withdraw(address _token, address _toAddress, uint256 _amount) external onlyAdmin {
-    IERC20Upgradeable(_token).safeTransfer(_toAddress, _amount);
-  }
-
-  /*
-   * Copied from idle.finance IdleTokenGovernance.sol
-   *
-   * Calculate amounts from percentage allocations (100000 => 100%)
-   * @author idle.finance
-   * @param _allocations : token allocations percentages
-   * @param total : total amount
-   * @return newAmounts : array with amounts
-   */
   function _amountsFromAllocations(uint256[] memory _allocations, uint256 total) internal pure returns (uint256[] memory newAmounts) {
     newAmounts = new uint256[](_allocations.length);
     uint256 currBalance;
@@ -480,17 +402,10 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
     return newAmounts;
   }
 
-  /*
-  @author Asaf Silman
-  @notice Replaces the current admin with a new admin.
-  @dev The current admin rights are revoked, and given the new address.
-  @dev The caller must be admin (see onlyAdmin modifier).
-  @param _newAdmin The new admin address.
-   */
-  function replaceAdmin(address _newAdmin) external onlyAdmin {
-    grantRole(DEFAULT_ADMIN_ROLE, _newAdmin);
-    revokeRole(DEFAULT_ADMIN_ROLE, msg.sender); 
-  }
+
+	/***********************/
+	/*****  MODIFIERS  *****/
+	/***********************/
 
   modifier onlyAdmin {
     require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Unauthorised: Not admin");
@@ -501,6 +416,11 @@ contract FeeCollector is Initializable, AccessControlUpgradeable {
     require(hasRole(WHITELISTED, msg.sender), "Unauthorised: Not whitelisted");
     _;
   }
+
+
+	/***********************/
+	/*****  VIEWS      *****/
+	/***********************/
 
   function getSplitAllocation() external view returns (uint256[] memory) { return (allocations); }
 

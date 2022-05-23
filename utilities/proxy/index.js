@@ -2,7 +2,7 @@ const contract = require("@truffle/contract");
 const ITransparentUpgradeableProxy = require('@openzeppelin/contracts/build/contracts/TransparentUpgradeableProxy.json')
 
 const deployProxy = async(implementationFactory, initializationArgs, proxyOwner, implementationOwner) => {
-  const implementationLogic = await implementationFactory.new()
+  const implementationLogic = await implementationFactory.new({from: implementationOwner})
 
   const TransparentUpgradableProxyFactory = contract(ITransparentUpgradeableProxy)
   

@@ -28,7 +28,7 @@
     "web3": "^1.7.3"
   },
   "scripts": {
-    "start": "ganache-cli --fork https://eth-mainnet.alchemyapi.io/v2/oPuANrR8LdckQq_jyNsUxtlV76MHpMkm  --unlock 0x3675D2A334f17bCD4689533b7Af263D48D96eC72 --unlock 0xe8eA8bAE250028a8709A3841E0Ae1a44820d677b --unlock 0xfbb1b73c4f0bda4f67dca266ce6ef42f520fbb98 --unlock 0xfD88D7E737a06Aa9c62B950C1cB5eE63DA379AFd --unlock 0xb0aA1f98523Ec15932dd5fAAC5d86e57115571C7 --unlock 0xD6dABBc2b275114a2366555d6C481EF08FDC2556 --networkId 4447",
+    "start": "ganache-cli --fork https://eth-mainnet.alchemyapi.io/v2/oPuANrR8LdckQq_jyNsUxtlV76MHpMkm  --unlock 0x3675D2A334f17bCD4689533b7Af263D48D96eC72 --unlock 0xe8eA8bAE250028a8709A3841E0Ae1a44820d677b --networkId 4447",
     "test": "truffle test --network test",
     "compile": "truffle compile"
   },
